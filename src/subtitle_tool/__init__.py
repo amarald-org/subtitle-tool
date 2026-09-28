@@ -15,7 +15,7 @@ from .dual import dual_ass, dual_srt
 
 def guess_title(video: Path) -> str:
     """'The.Matrix.1999.1080p.BluRay.x264.mkv' -> 'The Matrix 1999'."""
-    name = re.sub(r"[._]+", " ", video.stem)
+    name = re.sub(r"[._()\[\]]+", " ", video.stem)
     m = re.search(r"^(.*?\b(19|20)\d{2})\b", name)
     if m:
         return m.group(1).strip()
