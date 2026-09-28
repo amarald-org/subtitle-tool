@@ -23,19 +23,47 @@ def _clean(text: str) -> str:
 
 def _make_backend(name: str, target: str):
     if name == "deepl":
-        from deep_translator import DeeplTranslator
-
-        key = os.environ.get("DEEPL_API_KEY")
-        if not key:
-            raise RuntimeError("DEEPL_API_KEY is not set")
-        return DeeplTranslator(
-            api_key=key, source="en", target=target, use_free_api=key.endswith(":fx")
-        )
+        return _DeeplBackend(target)
     if name == "argos":
         return _ArgosBackend(target)
     from deep_translator import GoogleTranslator
 
     return GoogleTranslator(source="auto", target=target)
+
+
+class _DeeplBackend:
+    """DeepL REST API with header auth (DeepL no longer accepts the key as a URL param)."""
+
+    MAX_TEXTS = 50
+
+    def __init__(self, target: str):
+        import requests
+
+        key = (os.environ.get("DEEPL_API_KEY") or "").strip()
+        if not key:
+            raise RuntimeError("DEEPL_API_KEY is not set")
+        host = "api-free.deepl.com" if key.endswith(":fx") else "api.deepl.com"
+        self.url = f"https://{host}/v2/translate"
+        self.target = target.upper()
+        self.session = requests.Session()
+        self.session.headers["Authorization"] = f"DeepL-Auth-Key {key}"
+
+    def translate_many(self, texts: list[str]) -> list[str]:
+        out: list[str] = []
+        for i in range(0, len(texts), self.MAX_TEXTS):
+            chunk = texts[i : i + self.MAX_TEXTS]
+            r = self.session.post(
+                self.url,
+                json={"text": chunk, "source_lang": "EN", "target_lang": self.target},
+                timeout=60,
+            )
+            if r.status_code == 403:
+                raise RuntimeError("DeepL rejected the API key (403). Check DEEPL_API_KEY.")
+            if r.status_code == 456:
+                raise RuntimeError("DeepL monthly character quota used up (456).")
+            r.raise_for_status()
+            out += [t["text"] for t in r.json()["translations"]]
+        return out
 
 
 class _ArgosBackend:
@@ -81,6 +109,13 @@ def translate_lines(
 ) -> list[str]:
     tr = _make_backend(backend, target)
     cleaned = [_clean(t).replace("\n", " ") for t in texts]
+    if hasattr(tr, "translate_many"):
+        result = []
+        for i in range(0, len(cleaned), 200):
+            result += tr.translate_many(cleaned[i : i + 200])
+            if progress:
+                progress(len(result), len(cleaned))
+        return result
     result: list[str] = []
     batch: list[str] = []
     size = 0

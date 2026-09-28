@@ -117,7 +117,7 @@ def main() -> None:
     p.add_argument("--subs", help="use this subtitle file instead of searching OpenSubtitles")
     p.add_argument("--lang", default="en", help="subtitle language to fetch (default: en)")
     p.add_argument("--pick", action="store_true", help="choose from search results interactively")
-    p.add_argument("--no-sync", action="store_true", help="skip audio sync")
+    p.add_argument("--no-sync", "--nosync", dest="no_sync", action="store_true", help="skip audio sync")
     p.add_argument("-t", "--translate", action="store_true", help="also translate and write dual-language subs")
     p.add_argument("--target", default="fi", help="translation language (default: fi)")
     p.add_argument("--backend", choices=["google", "deepl", "argos"], default="google",

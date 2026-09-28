@@ -35,7 +35,7 @@ uv run subtitle-tool movie.mkv --subs movie.en.srt --translate
 ```
 
 Useful flags: `--title "The Matrix"` to override the search, `--pick` to choose from
-results, `--no-sync`, `--backend deepl|google|argos`, `-o outdir`.
+results, `--nosync`, `--backend deepl|google|argos`, `-o outdir`.
 
 Output, next to the video by default:
 
