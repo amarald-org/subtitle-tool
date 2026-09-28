@@ -7,6 +7,7 @@ Username/password are optional; logging in raises the daily download quota.
 from __future__ import annotations
 
 import os
+import re
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +54,23 @@ class SubtitleHit:
         return f"{self.title}{year} | {self.release} | {self.downloads} dl{tag}"
 
 
+def _split_year(query: str) -> tuple[str, int | None]:
+    m = re.search(r"\b((?:19|20)\d{2})\s*$", query)
+    if not m:
+        return query.strip(), None
+    return query[: m.start()].strip(), int(m.group(1))
+
+
+def _norm(text: str) -> str:
+    text = re.sub(r"^\d{4}\s*-\s*", "", text.lower())  # "1999 - The Matrix"
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text).split())
+
+
+def _same_title(query: str, title: str) -> bool:
+    q, t = _norm(query), _norm(title)
+    return bool(q and t) and (q == t or t.startswith(q) or q.startswith(t))
+
+
 class Client:
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or os.environ.get("OPENSUBTITLES_API_KEY")
@@ -80,8 +98,11 @@ class Client:
         self, query: str | None, language: str = "en", video: Path | None = None
     ) -> list[SubtitleHit]:
         params: dict[str, str] = {"languages": language, "order_by": "download_count"}
-        if query:
-            params["query"] = query
+        name, year = _split_year(query or "")
+        if name:
+            params["query"] = name
+        if year:
+            params["year"] = str(year)
         if video is not None:
             try:
                 params["moviehash"] = movie_hash(video)
@@ -107,8 +128,13 @@ class Client:
                     year=details.get("year"),
                 )
             )
-        # Hash matches are timed for this exact file, so prefer them.
-        hits.sort(key=lambda h: (not h.hash_match, -h.downloads))
+        if name:
+            # Hash matches can be mis-tagged uploads of other movies, so only
+            # keep results whose title actually matches what we searched for.
+            matching = [h for h in hits if _same_title(name, h.title)]
+            hits = matching or hits
+        # A hash match is timed for this exact file, so prefer it.
+        hits.sort(key=lambda h: (not h.hash_match, year is not None and h.year != year, -h.downloads))
         return hits
 
     def download(self, file_id: int) -> str:
