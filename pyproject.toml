@@ -1,0 +1,25 @@
+[project]
+name = "subtitle-tool"
+version = "0.1.0"
+description = "Find, sync and translate movie subtitles into stacked English + Finnish"
+readme = "README.md"
+authors = [
+    { name = "amarald", email = "aaro@amarald.io" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "deep-translator>=1.11.4",
+    "ffsubsync>=0.5.1",
+    "requests>=2.34.2",
+    "srt>=3.5.3",
+]
+
+[project.optional-dependencies]
+offline = ["argostranslate>=1.9"]
+
+[project.scripts]
+subtitle-tool = "subtitle_tool:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
