@@ -22,6 +22,25 @@ def guess_title(video: Path) -> str:
     return re.split(r"\b(1080p|720p|2160p|480p|bluray|web|hdrip|x264|x265)\b", name, flags=re.I)[0].strip()
 
 
+def find_local_subs(video: Path, lang: str) -> Path | None:
+    """A subtitle file already next to the movie, e.g. movie.srt or movie.en.srt."""
+    for name in (f"{video.stem}.{lang}.srt", f"{video.stem}.srt"):
+        p = video.with_name(name)
+        if p.exists():
+            return p
+    return None
+
+
+def read_text(path: Path) -> str:
+    data = path.read_bytes()
+    for enc in ("utf-8-sig", "cp1252"):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("latin-1")
+
+
 def log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
@@ -55,8 +74,13 @@ def run(args) -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         raw = Path(tmp) / "raw.srt"
-        if args.subs:
-            raw.write_text(Path(args.subs).expanduser().read_text(encoding="utf-8-sig"), encoding="utf-8")
+        local = Path(args.subs).expanduser() if args.subs else None
+        if local is None and not args.search:
+            local = find_local_subs(video, args.lang)
+            if local:
+                log(f"Using existing {local.name} (pass --search to fetch from OpenSubtitles instead)")
+        if local:
+            raw.write_text(read_text(local), encoding="utf-8")
         else:
             fetch_subtitles(args, video, raw)
 
@@ -114,7 +138,9 @@ def main() -> None:
     )
     p.add_argument("video", help="path to the movie file")
     p.add_argument("--title", help="movie name to search (default: guessed from filename)")
-    p.add_argument("--subs", help="use this subtitle file instead of searching OpenSubtitles")
+    p.add_argument("--subs", help="use this subtitle file (default: movie.en.srt or movie.srt next to the video, else search)")
+    p.add_argument("--search", action="store_true",
+                   help="search OpenSubtitles even if movie.srt / movie.en.srt already exists")
     p.add_argument("--lang", default="en", help="subtitle language to fetch (default: en)")
     p.add_argument("--pick", action="store_true", help="choose from search results interactively")
     p.add_argument("--no-sync", "--nosync", dest="no_sync", action="store_true", help="skip audio sync")
