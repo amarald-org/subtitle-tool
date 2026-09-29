@@ -4,37 +4,71 @@ Find English subtitles for a movie file you already have, sync them to the audio
 and optionally add a Finnish translation stacked under each English line for
 language learning.
 
-## Setup
+## Install
 
-Needs [uv](https://docs.astral.sh/uv/) and `ffmpeg` (`brew install ffmpeg`).
+**macOS / Linux**
 
 ```sh
-uv sync
+git clone https://github.com/aaro-cmd/subtitle-tool && cd subtitle-tool
+./install.sh
 ```
 
-Get a free OpenSubtitles API key at https://www.opensubtitles.com/consumers and set it:
+**Windows** (PowerShell)
+
+```powershell
+git clone https://github.com/aaro-cmd/subtitle-tool; cd subtitle-tool
+powershell -ExecutionPolicy ByPass -File .\install.ps1
+```
+
+The script installs [uv](https://docs.astral.sh/uv/) if missing, offers to install
+`ffmpeg`, then runs `uv tool install`, which puts a `subtitle-tool` command on your PATH.
+
+Without the script, if you already have uv and ffmpeg:
 
 ```sh
+uv tool install git+https://github.com/aaro-cmd/subtitle-tool   # install the command
+uv tool upgrade subtitle-tool                                  # update later
+uvx --from git+https://github.com/aaro-cmd/subtitle-tool subtitle-tool movie.mkv   # run once, no install
+```
+
+`uvx` runs a tool in a throwaway environment; `uv tool install` keeps it installed;
+`uv run subtitle-tool` only works inside a clone of this repo (useful while developing).
+
+## API keys
+
+Set these once. On macOS/Linux add the lines to `~/.zshrc` (or `~/.bashrc`); on Windows use
+`setx NAME "value"` and open a new terminal.
+
+```sh
+# Required for searching subtitles. Free: https://www.opensubtitles.com/consumers
 export OPENSUBTITLES_API_KEY=...
-# optional, raises the daily download limit:
+# Optional, raises the daily download limit:
 export OPENSUBTITLES_USERNAME=...
 export OPENSUBTITLES_PASSWORD=...
+
+# For --backend deepl (best Finnish). Free plan: https://www.deepl.com/pro-api
+export DEEPL_API_KEY=...
 ```
 
 ## Usage
 
 ```sh
-# Fetch English subs and sync them to the movie
-uv run subtitle-tool ~/Movies/The.Matrix.1999.1080p.mkv
+# English subs, synced to the movie
+subtitle-tool "~/Movies/The Matrix (1999)/The.Matrix.1999.mkv"
 
-# Same, plus Finnish translation and dual-language files
-uv run subtitle-tool ~/Movies/The.Matrix.1999.1080p.mkv --translate
+# Plus Finnish translation and dual-language files
+subtitle-tool "~/Movies/The Matrix (1999)/The.Matrix.1999.mkv" --translate --backend deepl
 
-# Use a subtitle file you already have instead of searching
-uv run subtitle-tool movie.mkv --subs movie.en.srt --translate
+# Another language: any code DeepL/Google supports
+subtitle-tool movie.mkv --translate --backend deepl --target sv
 ```
 
-Useful flags: `--title "The Matrix"` to override the search, `--pick` to choose from
+If `movie.en.srt` or `movie.srt` already sits next to the video, it is used instead of
+searching (pass `--search` to force a new download). `--subs file.srt` picks a specific file.
+Syncing still runs by default; it is quick and leaves already-correct subtitles alone.
+Use `--nosync` to skip it.
+
+Other flags: `--title "The Matrix"` to override the search, `--pick` to choose from
 results, `--nosync`, `--backend deepl|google|argos`, `-o outdir`.
 
 Output, next to the video by default:
