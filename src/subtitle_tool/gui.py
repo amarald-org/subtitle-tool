@@ -29,7 +29,7 @@ from PySide6.QtCore import (
     QUrl,
     Signal,
 )
-from PySide6.QtGui import QAction, QBrush, QColor, QIcon, QKeySequence, QPalette
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QIcon, QKeySequence, QPalette
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from PySide6.QtWidgets import (
@@ -74,7 +74,14 @@ from . import default_backend, find_local_subs, guess_title, read_text, write_tr
 VIDEO_FILTER = "Video or audio (*.mkv *.mp4 *.m4v *.avi *.mov *.webm *.mp3 *.m4a *.wav *.flac *.ogg);;All files (*)"
 SUB_FILTER = "Subtitles (*.srt);;All files (*)"
 COL_START, COL_END, COL_TOP, COL_BOTTOM = range(4)
-KEY_SETTINGS = ("OPENSUBTITLES_API_KEY", "OPENSUBTITLES_USERNAME", "OPENSUBTITLES_PASSWORD", "DEEPL_API_KEY")
+KEY_LABELS = {
+    "DEEPL_API_KEY": "DeepL API key",
+    "OPENSUBTITLES_API_KEY": "OpenSubtitles API key",
+    "OPENSUBTITLES_USERNAME": "OpenSubtitles username",
+    "OPENSUBTITLES_PASSWORD": "OpenSubtitles password",
+    "HF_TOKEN": "Hugging Face token (optional)",
+}
+KEY_SETTINGS = tuple(KEY_LABELS)
 
 
 @dataclass
@@ -171,7 +178,7 @@ class MultilineDelegate(QStyledItemDelegate):
 class _Signals(QObject):
     done = Signal(object)
     failed = Signal(str)
-    progress = Signal(str)
+    progress = Signal(object)  # a status string, or partial results for on_partial
 
 
 class Job(QRunnable):
@@ -282,11 +289,13 @@ class KeysDialog(QDialog):
             if "PASSWORD" in key or "KEY" in key:
                 edit.setEchoMode(QLineEdit.PasswordEchoOnEdit)
             self.fields[key] = edit
-            form.addRow(key.replace("_", " ").title(), edit)
+            form.addRow(KEY_LABELS[key], edit)
         form.addRow(QLabel(
-            'Free keys: <a href="https://www.opensubtitles.com/consumers">OpenSubtitles</a>, '
-            '<a href="https://www.deepl.com/pro-api">DeepL</a>',
-            openExternalLinks=True,
+            'Free keys: <a href="https://www.deepl.com/pro-api">DeepL</a> (translation), '
+            '<a href="https://www.opensubtitles.com/consumers">OpenSubtitles</a> (search), '
+            '<a href="https://huggingface.co/settings/tokens">Hugging Face</a> '
+            "(only makes Whisper downloads faster)",
+            openExternalLinks=True, wordWrap=True,
         ))
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -368,35 +377,119 @@ def combo_code(box: QComboBox) -> str | None:
     return text.split()[0].lower()
 
 
+def deepl_missing(backend: str) -> bool:
+    return backend == "deepl" and not os.environ.get("DEEPL_API_KEY")
+
+
+class ModelsDialog(QDialog):
+    """Downloaded Whisper models, with a way to free the disk space."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("Downloaded Whisper models")
+        self.resize(460, 260)
+        self.lay = QVBoxLayout(self)
+        self.list = QListWidget()
+        self.lay.addWidget(self.list)
+        row = QHBoxLayout()
+        delete = QPushButton("Delete selected")
+        delete.clicked.connect(self.delete)
+        close = QPushButton("Close")
+        close.clicked.connect(self.accept)
+        row.addWidget(delete)
+        row.addStretch(1)
+        row.addWidget(close)
+        self.lay.addLayout(row)
+        self.reload()
+
+    def reload(self) -> None:
+        from .transcribe import downloaded_models
+
+        self.list.clear()
+        self.models = downloaded_models()
+        for name, _repo, size in self.models:
+            self.list.addItem(f"{name}  –  {size / 1e9:.2f} GB")
+        if not self.models:
+            self.list.addItem("Nothing downloaded yet.")
+
+    def delete(self) -> None:
+        from .transcribe import delete_model
+
+        row = self.list.currentRow()
+        if 0 <= row < len(self.models):
+            delete_model(self.models[row][1])
+            self.reload()
+
+
 class AutoDialog(QDialog):
     def __init__(self, parent, target: str, backend: str):
         super().__init__(parent)
         self.setWindowTitle("Automatic subtitles")
+        self.backend = backend
         form = QFormLayout(self)
         form.addRow(QLabel(
-            "Listens to the audio with Whisper (runs on this computer) and writes\n"
-            "subtitles with timestamps. The model downloads once on first use."
+            "Listens to the audio with Whisper (runs on this computer, nothing is uploaded)\n"
+            "and writes subtitles with timestamps. The list fills in as it goes."
         ))
         self.model = QComboBox()
-        for name, note in [
-            ("tiny", "fastest, rough"), ("base", "fast"), ("small", "good, 480 MB"),
-            ("medium", "better, 1.5 GB"), ("large-v3-turbo", "best, 1.6 GB"),
-        ]:
-            self.model.addItem(f"{name} – {note}", name)
-        self.model.setCurrentIndex(QSettings().value("auto/model_index", 2, type=int))
         form.addRow("Accuracy", self.model)
+        manage = QPushButton("Manage downloads…")
+        manage.clicked.connect(self.manage)
+        form.addRow("", manage)
+        self._fill_models(QSettings().value("auto/model_index", 2, type=int))
         self.lang = lang_combo("", auto_label="Auto-detect")
         form.addRow("Spoken language", self.lang)
-        self.music = QCheckBox("Song or music video (keeps sung parts)")
+        self.music = QCheckBox("Song / music video")
+        self.music.setToolTip(
+            "Normally Whisper skips parts without speech, which can also skip singing over music.\n"
+            "Tick this for songs so sung parts are kept."
+        )
         form.addRow(self.music)
+        form.addRow(QLabel("   Tick for songs: keeps the sung parts instead of skipping them as music."))
         self.translate = QCheckBox(f"Also translate to '{target}' with {backend}")
         self.translate.setChecked(True)
         form.addRow(self.translate)
+        self.key_row = QWidget()
+        kr = QHBoxLayout(self.key_row)
+        kr.setContentsMargins(0, 0, 0, 0)
+        kr.addWidget(QLabel("⚠️ DeepL needs a free API key to translate."))
+        add_key = QPushButton("Add key…")
+        add_key.clicked.connect(self.add_key)
+        kr.addWidget(add_key)
+        kr.addStretch(1)
+        form.addRow(self.key_row)
+        self.key_row.setVisible(deepl_missing(backend))
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("Start")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
+
+    def _fill_models(self, index: int) -> None:
+        try:
+            from .transcribe import downloaded_models
+
+            have = {m[0] for m in downloaded_models()}
+        except Exception:
+            have = set()
+        self.model.clear()
+        for name, note in [
+            ("tiny", "fastest, rough, 75 MB"), ("base", "fast, 145 MB"), ("small", "good, 480 MB"),
+            ("medium", "better, 1.5 GB"), ("large-v3-turbo", "best, 1.6 GB"),
+        ]:
+            mark = "  ✓ downloaded" if name in have else ""
+            self.model.addItem(f"{name} – {note}{mark}", name)
+        self.model.setCurrentIndex(index)
+
+    def manage(self) -> None:
+        ModelsDialog(self).exec()
+        self._fill_models(self.model.currentIndex())
+
+    def add_key(self) -> None:
+        dlg = KeysDialog(self)
+        if dlg.exec() == QDialog.Accepted:
+            dlg.save()
+        self.key_row.setVisible(deepl_missing(self.backend))
 
     def accept(self):
         QSettings().setValue("auto/model_index", self.model.currentIndex())
@@ -433,7 +526,8 @@ class MainWindow(QMainWindow):
         self.play_btn.clicked.connect(self.toggle_play)
         self.slider = QSlider(Qt.Horizontal)
         self.slider.sliderMoved.connect(self.player.setPosition)
-        self.time_label = QLabel("00:00:00 / 00:00:00")
+        self.time_label = QLabel("00:00:00.000 / 00:00:00")
+        self.time_label.setFont(QFont("Menlo" if sys.platform == "darwin" else "Consolas", 11))
         self.volume = QSlider(Qt.Horizontal)
         self.volume.setRange(0, 100)
         self.volume.setValue(80)
@@ -458,20 +552,36 @@ class MainWindow(QMainWindow):
             btn.setToolTip(f"{'Back' if ms < 0 else 'Forward'} {abs(ms) / 1000:g} s ({tip})")
             btn.setStyleSheet(TOOLBAR_STYLE)
             seek_buttons.append(btn)
-        for btn in seek_buttons[:3]:
-            controls.addWidget(btn)
         controls.addWidget(self.play_btn)
-        for btn in seek_buttons[3:]:
-            controls.addWidget(btn)
         controls.addWidget(self.slider, 1)
         controls.addWidget(self.time_label)
         controls.addWidget(QLabel("🔊"))
         controls.addWidget(self.volume)
+
+        # Second row: fine seeking, and retiming the selected line to "now".
+        seek_row = QHBoxLayout()
+        for btn in seek_buttons[:3]:
+            seek_row.addWidget(btn)
+        seek_row.addSpacing(12)
+        for btn in seek_buttons[3:]:
+            seek_row.addWidget(btn)
+        seek_row.addStretch(1)
+        for label, slot, key, tip in [
+            ("⇤ Start = now", self.retime_start, "Ctrl+Shift+B", "Set the selected line's start to now"),
+            ("End = now ⇥", self.set_end, "Ctrl+Shift+E", "Set the selected line's end to now"),
+        ]:
+            btn = QToolButton()
+            btn.setDefaultAction(self._action(label, slot, shortcuts(key)))
+            btn.setToolTip(f"{tip} ({mod}{key.split('+', 1)[1].replace('Shift+', '⇧')})")
+            btn.setStyleSheet(TOOLBAR_STYLE)
+            seek_row.addWidget(btn)
         left = QWidget()
         lv = QVBoxLayout(left)
         lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(2)
         lv.addWidget(self.view, 1)
         lv.addLayout(controls)
+        lv.addLayout(seek_row)
 
         self.table = QTableWidget(0, 4)
         hdr = self.table.horizontalHeader()
@@ -610,9 +720,32 @@ class MainWindow(QMainWindow):
             a = QAction(text, self)
             a.triggered.connect(slot)
             file_menu.addAction(a)
+        help_menu = self.menuBar().addMenu("Help")
+        about = QAction("About Subtitle Tool", self)
+        about.setMenuRole(QAction.AboutRole)
+        about.triggered.connect(self.about)
+        help_menu.addAction(about)
         edit_menu = self.menuBar().addMenu("Edit")
         for a in (self.undo_act, self.redo_act, self.start_act, self.end_act):
             edit_menu.addAction(a)
+
+    def about(self) -> None:
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            ver = version("subtitle-tool")
+        except PackageNotFoundError:
+            ver = "dev"
+        box = QMessageBox(self)
+        box.setOption(QMessageBox.Option.DontUseNativeDialog, True)
+        box.setWindowTitle("About Subtitle Tool")
+        box.setIconPixmap(QIcon(str(ICON_PATH)).pixmap(96, 96))
+        box.setTextFormat(Qt.RichText)
+        box.setText(
+            f"<b>Subtitle Tool</b> {ver}<br>Find, sync, transcribe and translate subtitles.<br><br>"
+            '<a href="https://github.com/aaro-cmd/subtitle-tool">github.com/aaro-cmd/subtitle-tool</a>'
+        )
+        box.exec()
 
     def target_code(self) -> str:
         return combo_code(self.target) or "fi"
@@ -793,9 +926,10 @@ class MainWindow(QMainWindow):
         self.table.item(row, col).setText(text)
         self._filling = False
 
-    def on_row_clicked(self, row: int, _col: int) -> None:
+    def on_row_clicked(self, row: int, col: int) -> None:
         if 0 <= row < len(self.cues):
-            self.player.setPosition(self.cues[row].start)
+            cue = self.cues[row]
+            self.player.setPosition(cue.end if col == COL_END else cue.start)
 
     # manual timing
 
@@ -832,13 +966,8 @@ class MainWindow(QMainWindow):
     def set_end(self) -> None:
         self._commit_editor()
         pos = self.player.position()
-        if self.open_cue in self.cues:
-            cue = self.open_cue
-        elif self.current >= 0:
-            cue = self.cues[self.current]
-        elif self.table.currentRow() >= 0:
-            cue = self.cues[self.table.currentRow()]
-        else:
+        cue = self.open_cue if self.open_cue in self.cues else self._target_cue()
+        if cue is None:
             return
         if pos <= cue.start:
             self.statusBar().showMessage("The end has to be after the start.")
@@ -849,6 +978,29 @@ class MainWindow(QMainWindow):
         self.refresh_table()
         self.mark_dirty()
         self.statusBar().showMessage(f"Subtitle ends at {fmt_ms(pos)}")
+
+    def _target_cue(self) -> Cue | None:
+        """The selected line, or else the one on screen now."""
+        rows = {i.row() for i in self.table.selectedIndexes()}
+        if len(rows) == 1 and 0 <= next(iter(rows)) < len(self.cues):
+            return self.cues[next(iter(rows))]
+        return self.cues[self.current] if 0 <= self.current < len(self.cues) else None
+
+    def retime_start(self) -> None:
+        self._commit_editor()
+        cue = self._target_cue()
+        if cue is None:
+            return
+        pos = self.player.position()
+        if pos >= cue.end:
+            self.statusBar().showMessage("The start has to be before the end.")
+            return
+        self.checkpoint("set start")
+        cue.start = pos
+        self.refresh_table()
+        self.table.selectRow(self.cues.index(cue))
+        self.mark_dirty()
+        self.statusBar().showMessage(f"Subtitle starts at {fmt_ms(pos)}")
 
     def delete_rows(self) -> None:
         if self.table.state() == QAbstractItemView.EditingState:
@@ -881,7 +1033,7 @@ class MainWindow(QMainWindow):
     def on_position(self, pos: int) -> None:
         if not self.slider.isSliderDown():
             self.slider.setValue(pos)
-        self.time_label.setText(f"{fmt_ms(pos)[:8]} / {fmt_ms(self.player.duration())[:8]}")
+        self.time_label.setText(f"{fmt_ms(pos).replace(',', '.')} / {fmt_ms(self.player.duration())[:8]}")
         i = bisect.bisect_right(self.starts, pos) - 1
         active = i if 0 <= i < len(self.cues) and pos < self.cues[i].end else -1
         if active >= 0:
@@ -917,7 +1069,7 @@ class MainWindow(QMainWindow):
 
     # background actions
 
-    def run_job(self, label: str, fn, on_done) -> None:
+    def run_job(self, label: str, fn, on_done, on_partial=None) -> None:
         self.statusBar().showMessage(label)
         QApplication.setOverrideCursor(Qt.BusyCursor)
         job = Job(fn)
@@ -926,6 +1078,7 @@ class MainWindow(QMainWindow):
         def finish():
             QApplication.restoreOverrideCursor()
             self._busy_jobs.remove(job)
+            self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
 
         def done(result):
             finish()
@@ -936,9 +1089,15 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Failed")
             msg_box(QMessageBox.Warning, self, "Something went wrong", msg)
 
+        def progress(obj):
+            if isinstance(obj, str):
+                self.statusBar().showMessage(obj)
+            elif on_partial:
+                on_partial(obj)
+
         job.signals.done.connect(done)
         job.signals.failed.connect(failed)
-        job.signals.progress.connect(self.statusBar().showMessage)
+        job.signals.progress.connect(progress)
         self.pool.start(job)
 
     def search(self) -> None:
@@ -1008,39 +1167,67 @@ class MainWindow(QMainWindow):
         video, model = self.video_path, dlg.model.currentData()
         language, music, also_translate = combo_code(dlg.lang), dlg.music.isChecked(), dlg.translate.isChecked()
 
+        translate_on = also_translate and not deepl_missing(backend)
+
         def work(progress):
             from .transcribe import transcribe
+            from .translate import translate_lines
 
-            lang, lines = transcribe(video, model=model, language=language, music=music, progress=progress)
-            cues = [Cue(l.start, l.end, l.text) for l in lines]
-            error = None
-            if also_translate and cues and lang != target:
-                from .translate import translate_lines
+            state = {"error": None, "buffer": []}
 
-                try:
-                    out = translate_lines(
-                        [c.top for c in cues], target=target, backend=backend, source=lang,
-                        progress=lambda d, t: progress(f"Translating… {d}/{t}"),
-                    )
-                    for c, t in zip(cues, out):
-                        c.bottom = t
-                except Exception as e:  # keep the transcription even if translation fails
-                    error = f"{type(e).__name__}: {e}"
-            return lang, cues, error
+            def send(lang, final=False):
+                batch = state["buffer"]
+                if not batch or (len(batch) < 5 and not final):
+                    return
+                state["buffer"] = []
+                if translate_on and lang != target and not state["error"]:
+                    try:
+                        out = translate_lines([c.top for c in batch], target=target, backend=backend, source=lang)
+                        for c, t in zip(batch, out):
+                            c.bottom = t
+                    except Exception as e:  # keep transcribing even if translation fails
+                        state["error"] = f"{type(e).__name__}: {e}"
+                progress((lang, batch))
+
+            def on_lines(lang, lines):
+                state["buffer"] += [Cue(l.start, l.end, l.text) for l in lines]
+                send(lang)
+
+            lang, _lines = transcribe(
+                video, model=model, language=language, music=music, progress=progress, on_lines=on_lines
+            )
+            send(lang, final=True)
+            return lang, state["error"]
+
+        started = {"yes": False}
+
+        def partial(result):
+            lang, batch = result
+            if not started["yes"]:
+                started["yes"] = True
+                self.checkpoint("auto subtitles")
+                self.cues = []
+                self.source_lang = lang
+                self._update_headers()
+            self.cues += batch
+            self.refresh_table()
+            self.mark_dirty()
 
         def done(result):
-            lang, cues, error = result
-            self.checkpoint("auto subtitles")
-            self.source_lang = lang
-            self._update_headers()
-            self.set_cues(cues)
-            self.mark_dirty()
-            msg = f"Made {len(cues)} subtitles from the audio (language: {lang})."
+            lang, error = result
+            self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
+            msg = f"Made {len(self.cues)} subtitles from the audio (language: {lang})."
             self.statusBar().showMessage(msg)
-            if error:
+            if also_translate and not translate_on:
+                msg_box(QMessageBox.Information, self, "Not translated",
+                        f"{msg}\n\nAdd a DeepL key under Keys… (or pick google) and press Translate.")
+            elif error:
                 msg_box(QMessageBox.Warning, self, "Translation failed", f"{msg}\n\nTranslation failed: {error}")
 
-        self.run_job("Starting automatic subtitles…", work, done)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)  # read-only while it fills
+        self.run_job("Starting automatic subtitles…", work, done, on_partial=partial)
+        return
+
 
     def sync(self) -> None:
         if not (self.video_path and self.cues):
@@ -1048,13 +1235,13 @@ class MainWindow(QMainWindow):
             return
         video, cues = self.video_path, [replace(c) for c in self.cues]
 
-        def work(_progress):
+        def work(progress):
             from .sync import sync_to_video
 
             with tempfile.TemporaryDirectory() as tmp:
                 src, out = Path(tmp) / "in.srt", Path(tmp) / "out.srt"
                 src.write_text(srt.compose(cues_to_srt(cues)), encoding="utf-8")
-                sync_to_video(video, src, out)
+                sync_to_video(video, src, out, progress)
                 return parse_srt(out.read_text(encoding="utf-8"))
 
         def done(synced: list[Cue]):
@@ -1068,7 +1255,7 @@ class MainWindow(QMainWindow):
             self.mark_dirty()
             self.statusBar().showMessage("Synced to the audio.")
 
-        self.run_job("Syncing to the audio… (about half a minute)", work, done)
+        self.run_job("Syncing to the audio…", work, done)
 
     def shift(self) -> None:
         secs, ok = QInputDialog.getDouble(
@@ -1089,6 +1276,13 @@ class MainWindow(QMainWindow):
                 self, "Translate", "Every row already has a translation. Clear a cell to re-translate it."
             )
             return
+        if deepl_missing(self.backend.currentText()):
+            dlg = KeysDialog(self)
+            if dlg.exec() != QDialog.Accepted:
+                return
+            dlg.save()
+            if deepl_missing(self.backend.currentText()):
+                return
         texts = [self.cues[i].top for i in rows]
         targets = [self.cues[i] for i in rows]
         backend, target, source = self.backend.currentText(), self.target_code(), self.source_lang

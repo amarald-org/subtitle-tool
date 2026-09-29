@@ -1,0 +1,112 @@
+name: Build apps
+
+# Push a tag like v0.0.1 to build macOS, Windows and Linux apps and publish a
+# GitHub release. "Run workflow" builds the same files as downloadable artifacts.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  UV_PYTHON: "3.12"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: macOS-arm64
+          - os: windows-latest
+            label: Windows-x64
+          - os: ubuntu-22.04
+            label: Linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Version
+        id: v
+        shell: bash
+        run: echo "version=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xkb1 libpulse0 libfuse2 file
+
+      - name: Build app
+        shell: bash
+        run: |
+          uv run --extra gui --extra auto --with pyinstaller --with pillow \
+            pyinstaller --noconfirm --distpath dist --workpath build packaging/subtitle-tool.spec
+
+      - name: Smoke test (command-line mode)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then BIN="dist/Subtitle Tool.app/Contents/MacOS/Subtitle Tool"
+          elif [ "$RUNNER_OS" = "Windows" ]; then BIN="dist/Subtitle Tool/Subtitle Tool.exe"
+          else BIN="dist/Subtitle Tool/Subtitle Tool"; fi
+          "$BIN" --cli --help | head -3
+
+      - name: Package macOS (.dmg)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir dmg && cp -R "dist/Subtitle Tool.app" dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname "Subtitle Tool" -srcfolder dmg -ov -format UDZO \
+            "Subtitle-Tool-${{ steps.v.outputs.version }}-${{ matrix.label }}.dmg"
+
+      - name: Package Windows (.zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "dist/Subtitle Tool" -DestinationPath "Subtitle-Tool-${{ steps.v.outputs.version }}-${{ matrix.label }}.zip"
+
+      - name: Package Linux (.AppImage)
+        if: runner.os == 'Linux'
+        run: |
+          APPDIR=AppDir
+          mkdir -p $APPDIR/usr/bin
+          cp -R "dist/Subtitle Tool/." $APPDIR/usr/bin/
+          cp packaging/icon.png $APPDIR/subtitle-tool.png
+          cp packaging/subtitle-tool.desktop $APPDIR/subtitle-tool.desktop
+          printf '#!/bin/sh\nHERE="$(dirname "$(readlink -f "$0")")"\nexec "$HERE/usr/bin/Subtitle Tool" "$@"\n' > $APPDIR/AppRun
+          chmod +x $APPDIR/AppRun
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool $APPDIR \
+            "Subtitle-Tool-${{ steps.v.outputs.version }}-${{ matrix.label }}.AppImage"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}
+          path: |
+            Subtitle-Tool-*.dmg
+            Subtitle-Tool-*.zip
+            Subtitle-Tool-*.AppImage
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* \
+            --title "Subtitle Tool ${GITHUB_REF_NAME#v}" \
+            --notes-file packaging/release-notes.md

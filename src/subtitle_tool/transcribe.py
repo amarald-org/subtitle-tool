@@ -11,6 +11,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+# Must be set before huggingface_hub is imported. Plain HTTP downloads write into
+# the cache as they go, which lets us show real progress (Xet writes at the end).
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+
 MODELS = ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"]
 DEFAULT_MODEL = "small"
 MAX_CHARS = 84  # two lines of ~42, the usual subtitle limit
@@ -25,14 +30,147 @@ class Line:
     text: str
 
 
+def _quiet_libraries() -> None:
+    """Hide harmless library chatter (HF token hint, FFmpeg decoder notes)."""
+    try:
+        from huggingface_hub.utils import logging as hf_logging
+
+        hf_logging.set_verbosity_error()
+    except Exception:
+        pass
+    try:
+        import av.logging
+
+        av.logging.set_level(av.logging.ERROR)
+    except Exception:
+        pass
+
+
+def repo_for(model: str) -> str:
+    from faster_whisper.utils import _MODELS
+
+    return _MODELS.get(model, model)
+
+
+def _repo_cache_dir(repo: str) -> Path:
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    return Path(HF_HUB_CACHE) / ("models--" + repo.replace("/", "--"))
+
+
+def _dir_size(path: Path) -> int:
+    total = 0
+    for f in path.rglob("*"):
+        try:
+            if f.is_file() and not f.is_symlink():
+                total += f.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+ALLOW = ["config.json", "preprocessor_config.json", "model.bin", "tokenizer.json", "vocabulary.*"]
+
+
+def ensure_model(model: str, progress=None) -> str:
+    """Local path of the model, downloading it first with % / MB/s progress."""
+    import threading
+    import time
+
+    from huggingface_hub import HfApi, snapshot_download
+
+    _quiet_libraries()
+    repo = repo_for(model)
+    try:
+        return snapshot_download(repo, allow_patterns=ALLOW, local_files_only=True)
+    except Exception:
+        pass
+
+    total = 0
+    try:
+        info = HfApi().model_info(repo, files_metadata=True)
+        total = sum((f.size or 0) for f in info.siblings if f.rfilename in
+                    ("config.json", "preprocessor_config.json", "model.bin", "tokenizer.json")
+                    or f.rfilename.startswith("vocabulary."))
+    except Exception:
+        pass
+
+    result: dict = {}
+
+    def download():
+        try:
+            result["path"] = snapshot_download(repo, allow_patterns=ALLOW)
+        except Exception as e:
+            result["error"] = e
+
+    cache = _repo_cache_dir(repo)
+    start_size = _dir_size(cache) if cache.exists() else 0
+    t = threading.Thread(target=download, daemon=True)
+    t.start()
+    last_time, last_size = time.time(), start_size
+    speed = 0.0
+    while t.is_alive():
+        t.join(0.5)
+        if not progress:
+            continue
+        size = _dir_size(cache) if cache.exists() else 0
+        now = time.time()
+        if now - last_time >= 1:
+            speed = 0.6 * speed + 0.4 * (size - last_size) / (now - last_time)
+            last_time, last_size = now, size
+        mb = size / 1e6
+        if total:
+            pct = min(99, int(100 * size / total))
+            eta = f", {int((total - size) / speed)} s left" if speed > 0 else ""
+            progress(f"Downloading Whisper '{model}': {pct}% ({mb:.0f} of {total / 1e6:.0f} MB, "
+                     f"{speed / 1e6:.1f} MB/s{eta})")
+        else:
+            progress(f"Downloading Whisper '{model}': {mb:.0f} MB ({speed / 1e6:.1f} MB/s)")
+    if "error" in result:
+        raise result["error"]
+    return result["path"]
+
+
+def downloaded_models() -> list[tuple[str, str, int]]:
+    """(model name, repo id, bytes on disk) for Whisper models in the cache."""
+    from faster_whisper.utils import _MODELS
+    from huggingface_hub import scan_cache_dir
+
+    names = {}
+    for name, repo in _MODELS.items():
+        names.setdefault(repo, name)
+    try:
+        cache = scan_cache_dir()
+    except Exception:
+        return []
+    return [(names[r.repo_id], r.repo_id, r.size_on_disk) for r in cache.repos if r.repo_id in names]
+
+
+def delete_model(repo: str) -> int:
+    """Remove a downloaded model; returns bytes freed."""
+    from huggingface_hub import scan_cache_dir
+
+    cache = scan_cache_dir()
+    hashes = [rev.commit_hash for r in cache.repos if r.repo_id == repo for rev in r.revisions]
+    if not hashes:
+        return 0
+    strategy = cache.delete_revisions(*hashes)
+    strategy.execute()
+    return strategy.expected_freed_size
+
+
 def transcribe(
     media: Path,
     model: str = DEFAULT_MODEL,
     language: str | None = None,
     music: bool = False,
     progress=None,
+    on_lines=None,
 ) -> tuple[str, list[Line]]:
     """Return (detected language code, subtitle lines).
+
+    on_lines(lang, new_lines) is called as lines become final, so a UI can fill in
+    while the rest of the audio is still being transcribed.
 
     music=True keeps quiet/sung passages (no voice-activity filter) and doesn't
     let the previous line steer the next, which helps with lyrics.
@@ -45,9 +183,10 @@ def transcribe(
             "uv tool install --force 'subtitle-tool[gui,auto] @ git+https://github.com/aaro-cmd/subtitle-tool'"
         ) from e
 
+    path = ensure_model(model, progress)
     if progress:
-        progress(f"Loading Whisper '{model}' (downloads once)…")
-    wm = WhisperModel(model, device="auto", compute_type="int8", cpu_threads=os.cpu_count() or 4)
+        progress(f"Loading Whisper '{model}'…")
+    wm = WhisperModel(path, device="auto", compute_type="int8", cpu_threads=os.cpu_count() or 4)
     segments, info = wm.transcribe(
         str(media),
         language=language,
@@ -56,15 +195,29 @@ def transcribe(
         condition_on_previous_text=not music,
     )
     total = info.duration or 0
-    words = []
+    pending: list[tuple[float, float, str]] = []
+    done: list[Line] = []
     for seg in segments:
         if progress and total:
             progress(f"Transcribing… {int(100 * seg.end / total)}%")
         if seg.words:
-            words += [(w.start, w.end, w.word) for w in seg.words]
+            pending += [(w.start, w.end, w.word) for w in seg.words]
         else:
-            words.append((seg.start, seg.end, " " + seg.text.strip()))
-    return info.language, _to_lines(words)
+            pending.append((seg.start, seg.end, " " + seg.text.strip()))
+        lines = _to_lines(pending)
+        if len(lines) > 1:
+            # Everything but the last line is final; the last may still grow.
+            final = lines[:-1]
+            cut = lines[-1].start / 1000
+            pending = [w for w in pending if w[0] >= cut - 1e-6]
+            done += final
+            if on_lines:
+                on_lines(info.language, final)
+    final = _to_lines(pending)
+    done += final
+    if on_lines and final:
+        on_lines(info.language, final)
+    return info.language, done
 
 
 def _balance(text: str) -> str:

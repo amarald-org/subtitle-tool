@@ -1,138 +1,150 @@
-# subtitle-tool
+<div align="center">
 
-Find English subtitles for a movie file you already have, sync them to the audio,
-and optionally add a Finnish translation stacked under each English line for
-language learning.
+<img src="docs/icon.png" width="112" alt="">
 
-## Install
+# Subtitle Tool
 
-**macOS / Linux**
+**Subtitles for language learning: find them, sync them, or make them from the audio,
+then read the original and your language together.**
+
+[![Release](https://img.shields.io/github/v/release/aaro-cmd/subtitle-tool?include_prereleases&label=download)](https://github.com/aaro-cmd/subtitle-tool/releases/latest)
+![Platforms](https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-lightgrey)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+<!-- Buy Me a Coffee: replace YOUR_NAME with your page name -->
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-☕-FFDD00?logo=buymeacoffee&logoColor=black)](https://www.buymeacoffee.com/YOUR_NAME)
+
+<img src="docs/screenshot.png" width="860" alt="Subtitle Tool: video with English and Finnish subtitles, editable subtitle list on the right">
+
+</div>
+
+## What it does
+
+- 🔎 **Find** subtitles for a movie on OpenSubtitles (by file fingerprint and title).
+- 🎯 **Sync** them to the movie's audio, so they're on time even when they came from another release.
+- ✨ **Make** subtitles from the audio with Whisper, on your own computer (no upload, no key).
+  Works for your own videos, YouTube downloads and songs.
+- 🌍 **Translate** to Finnish or any other language (DeepL or Google).
+- 📚 **Show both** languages at once: the original in white, the translation in yellow underneath.
+- ✏️ **Edit** everything in a simple player: fix lines, retime them, or write subtitles by hand.
+
+Everything is saved as normal `.srt` / `.ass` files next to the video, so any player
+(VLC, IINA, mpv, Plex…) can show them.
+
+## Download
+
+Grab the app for your system from **[Releases](https://github.com/aaro-cmd/subtitle-tool/releases/latest)**:
+
+| System | File |
+| --- | --- |
+| macOS (Apple Silicon) | `Subtitle-Tool-…-macOS-arm64.dmg` |
+| Windows (64-bit) | `Subtitle-Tool-…-Windows-x64.zip` |
+| Linux (x86_64) | `Subtitle-Tool-…-Linux-x86_64.AppImage` |
+
+> **First launch:** the builds aren't signed yet. On **macOS** right-click the app › **Open**.
+> On **Windows** SmartScreen: **More info › Run anyway**. On **Linux** `chmod +x` the AppImage.
+
+## Using the editor
+
+Open a video. Subtitles already next to it (`movie.srt`, `movie.en.srt`, `movie.fi.srt`) load
+automatically. Otherwise:
+
+| | |
+| --- | --- |
+| ✨ **Auto** | Listens to the audio and writes subtitles with timestamps; the list fills in as it goes, translated if you like |
+| **Search** | Find subtitles online, then **Sync** to match them to the audio |
+| **⏺ Set start / ⏹ Set end** | Write your own: start a line at the current moment, type it, end it |
+| **⇤ Start = now / End = now ⇥** | Retime the selected line to the current moment |
+| **Translate** | Fill empty translation cells (clear a cell to re-translate that line) |
+| **Keys…** | DeepL, OpenSubtitles and Hugging Face keys, remembered by the app |
+
+Click a start or end time to jump there. Double-click a line to edit it
+(Enter saves, Shift+Enter adds a line break).
+
+**Shortcuts** (⌘ on macOS, Ctrl on Windows/Linux)
+
+| Keys | Action |
+| --- | --- |
+| Space | Play / pause |
+| ⌘J / ⌘L | Back / forward 1 s |
+| ⌘⇧J / ⌘⇧L | Back / forward 5 s |
+| ⌘⌥J / ⌘⌥L | Back / forward 0.2 s |
+| ⌘B / ⌘E | Set start (new line) / set end |
+| ⌘⇧B / ⌘⇧E | Selected line: start = now / end = now |
+| ⌘Z / ⌘Y | Undo / redo |
+| ⌘S | Save |
+| Delete | Remove selected lines |
+
+## API keys (free)
+
+| Key | Needed for | Get it |
+| --- | --- | --- |
+| DeepL | Translation (best quality; free plan ≈ 500 000 characters/month) | [deepl.com/pro-api](https://www.deepl.com/pro-api) |
+| OpenSubtitles | Searching subtitles online | [opensubtitles.com/consumers](https://www.opensubtitles.com/consumers) |
+| Hugging Face | Optional, faster Whisper model downloads | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) |
+
+Enter them in the app under **Keys…**, or as environment variables
+(`DEEPL_API_KEY`, `OPENSUBTITLES_API_KEY`, `HF_TOKEN`). Whisper and syncing need no key.
+
+## Whisper models
+
+The first **Auto** downloads a speech model once (shown with progress and speed):
+
+| Model | Size | |
+| --- | --- | --- |
+| tiny / base | 75 / 145 MB | fast, rough |
+| small | 480 MB | good default |
+| medium | 1.5 GB | better |
+| large-v3-turbo | 1.6 GB | best |
+
+Remove them any time from **Auto › Manage downloads…**, or `subtitle-tool models --delete large-v3-turbo`.
+They live in `~/.cache/huggingface/hub`.
+
+**Songs:** tick *Song / music video* in the Auto window. Whisper normally skips parts without
+speech, which can also skip singing over music; this keeps them. Clear vocals work well;
+very loud mixes may miss or invent words.
+
+## Command line
+
+The same features without the window. Install with [uv](https://docs.astral.sh/uv/):
 
 ```sh
 git clone https://github.com/aaro-cmd/subtitle-tool && cd subtitle-tool
-./install.sh
+./install.sh                     # Windows: powershell -ExecutionPolicy ByPass -File .\install.ps1
 ```
-
-**Windows** (PowerShell)
-
-```powershell
-git clone https://github.com/aaro-cmd/subtitle-tool; cd subtitle-tool
-powershell -ExecutionPolicy ByPass -File .\install.ps1
-```
-
-The script installs [uv](https://docs.astral.sh/uv/) if missing, offers to install
-`ffmpeg`, then runs `uv tool install`, which puts a `subtitle-tool` command on your PATH.
-
-Without the script, if you already have uv and ffmpeg:
 
 ```sh
-uv tool install git+https://github.com/aaro-cmd/subtitle-tool   # install the command
-uv tool upgrade subtitle-tool                                  # update later
-uvx --from git+https://github.com/aaro-cmd/subtitle-tool subtitle-tool movie.mkv   # run once, no install
+subtitle-tool movie.mkv                      # find + sync English subtitles
+subtitle-tool movie.mkv -t                   # … and add Finnish, plus dual-language files
+subtitle-tool video.webm --auto -t           # transcribe with Whisper, then translate
+subtitle-tool song.mp3 --auto -t --music     # tuned for songs
+subtitle-tool movie.mkv -t --target sv       # another language
+subtitle-tool gui movie.mkv                  # open the editor
+subtitle-tool models                         # list / delete Whisper models
 ```
 
-`uvx` runs a tool in a throwaway environment; `uv tool install` keeps it installed;
-`uv run subtitle-tool` only works inside a clone of this repo (useful while developing).
+The downloaded app has the same command line: `"Subtitle Tool" --cli movie.mkv --auto -t`.
 
-## API keys
-
-Set these once. On macOS/Linux add the lines to `~/.zshrc` (or `~/.bashrc`); on Windows use
-`setx NAME "value"` and open a new terminal.
-
-```sh
-# Required for searching subtitles. Free: https://www.opensubtitles.com/consumers
-export OPENSUBTITLES_API_KEY=...
-# Optional, raises the daily download limit:
-export OPENSUBTITLES_USERNAME=...
-export OPENSUBTITLES_PASSWORD=...
-
-# For --backend deepl (best Finnish). Free plan: https://www.deepl.com/pro-api
-export DEEPL_API_KEY=...
-```
-
-## Usage
-
-```sh
-# English subs, synced to the movie
-subtitle-tool "$HOME/Movies/The Matrix (1999)/The.Matrix.1999.mkv"
-
-# Plus Finnish translation and dual-language files
-subtitle-tool "$HOME/Movies/The Matrix (1999)/The.Matrix.1999.mkv" --translate --backend deepl
-
-# Another language: any code DeepL/Google supports
-subtitle-tool movie.mkv --translate --backend deepl --target sv
-```
-
-### Automatic subtitles (Whisper)
-
-For your own videos, YouTube downloads or songs with no subtitles online:
-
-```sh
-subtitle-tool video.webm --auto              # transcribe; language is detected
-subtitle-tool video.webm --auto -t           # transcribe + translate to Finnish
-subtitle-tool song.mp3 --auto -t --music     # tuned for singing
-subtitle-tool video.webm --auto --model large-v3-turbo   # slower, most accurate
-```
-
-This uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) on your own computer
-(no upload, no key). The model downloads once on first use: `small` (default) is 480 MB,
-`large-v3-turbo` 1.6 GB. Timestamps come from the audio, so no sync step is needed.
-
-If `movie.en.srt` or `movie.srt` already sits next to the video, it is used instead of
-searching (pass `--search` to force a new download). `--subs file.srt` picks a specific file.
-Syncing still runs by default; it is quick and leaves already-correct subtitles alone.
-Use `--nosync` to skip it.
-
-## Editor window
-
-```sh
-subtitle-tool gui "$HOME/Movies/The Matrix (1999)/The.Matrix.1999.mkv"
-```
-
-The video plays on the left; the right side lists every subtitle with its times, the original
-line and the translation (in a different colour). The list follows playback, clicking a row
-jumps there, and double-clicking a cell edits it (Enter saves, Shift+Enter adds a line).
-
-| Button | What it does |
-| --- | --- |
-| ✨ Auto | Subtitles from the audio with Whisper, plus the translation |
-| Search / Sync / Shift | Find subtitles online, align them to the audio, move them all |
-| ⏺ Set start / ⏹ Set end | Write subtitles by hand: start a line at the current moment, type, then end it |
-| ◀ Undo / Redo ▶ | Step back and forward through changes |
-| Translate | Fill empty translation cells (clear a cell to re-translate it) |
-| Save | Write the same files as the command line |
-| Keys… | OpenSubtitles and DeepL keys, remembered by the app |
-
-Shortcuts (⌘ on Mac, Ctrl elsewhere; plain Ctrl also works on Mac): Space play/pause,
-S save, Z undo, Y redo, B set start, E set end, Delete removes selected rows.
-Seek: J / L back / forward 1 s, Shift+J / L 5 s, Alt+J / L 0.2 s (these work while typing a
-line too); the −5s … +5s buttons beside Play do the same.
-
-Playback uses Qt's built-in player, which ships its own FFmpeg inside the Python package,
-so nothing else needs installing. Installed through uv the Qt package is about 1 GB, because
-PyPI ships Qt as one big bundle. `packaging/build_app.sh` builds a standalone app instead
-(about 115 MB zipped, Whisper included) that people can download without Python.
-
-Other flags: `--title "The Matrix"` to override the search, `--pick` to choose from
-results, `--nosync`, `--backend deepl|google|argos`, `-o outdir`.
-
-Output, next to the video by default:
+Output files, next to the video:
 
 | File | Contents |
 | --- | --- |
-| `movie.en.srt` | English, synced to the audio |
-| `movie.fi.srt` | Finnish only |
-| `movie.en-fi.srt` | English with Finnish underneath (yellow italics) |
-| `movie.en-fi.ass` | Same, styled; best in VLC / mpv / IINA |
+| `movie.en.srt` | Original language |
+| `movie.fi.srt` | Translation only |
+| `movie.en-fi.srt` | Both, translation in yellow italics |
+| `movie.en-fi.ass` | Both, styled (best in VLC / mpv / IINA) |
 
 ## How it works
 
-1. **Search**: OpenSubtitles REST API, by file hash (exact release match) and by title guessed from the filename.
-2. **Sync**: [ffsubsync](https://github.com/smacke/ffsubsync) aligns the subtitle timing to speech detected in the audio.
-3. **Translate**:
-   - `google` (default): free, no key. Unofficial endpoint, may rate-limit or block some networks.
-   - `deepl`: best Finnish quality. Free tier is 500k characters/month (a movie is roughly 50–80k). Set `DEEPL_API_KEY`.
-   - `argos`: fully offline. `uv sync --extra offline` (large download: pulls PyTorch) then `--backend argos`.
-4. **Stack**: writes the dual `.srt` and `.ass`.
+[faster-whisper](https://github.com/SYSTRAN/faster-whisper) for transcription,
+[ffsubsync](https://github.com/smacke/ffsubsync) + webrtcvad for syncing,
+[PyAV](https://github.com/PyAV-Org/PyAV) for audio,
+[Qt for Python](https://doc.qt.io/qtforpython/) for the player (FFmpeg built in),
+DeepL / Google for translation, OpenSubtitles for search.
+Building the apps yourself: `packaging/build_app.sh`.
 
-Movies themselves are never downloaded.
+## Support
+
+Subtitle Tool is free and open source. If it helps you learn a language,
+you can [buy me a coffee](https://www.buymeacoffee.com/YOUR_NAME) ☕
+
+MIT licensed. Movies are never downloaded by this tool.

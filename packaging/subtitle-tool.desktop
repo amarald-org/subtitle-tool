@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Subtitle Tool
+Comment=Find, sync, transcribe and translate subtitles for language learning
+Exec=AppRun %F
+Icon=subtitle-tool
+Categories=AudioVideo;Video;Education;
+StartupWMClass=subtitle-tool
+Terminal=false

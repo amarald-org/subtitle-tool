@@ -1,15 +1,18 @@
 [project]
 name = "subtitle-tool"
-version = "0.1.0"
+version = "0.0.1"
 description = "Find, sync and translate movie subtitles into stacked English + Finnish"
 readme = "README.md"
 authors = [
     { name = "amarald", email = "aaro@amarald.io" }
 ]
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
+    "av>=18.1.0",
     "deep-translator>=1.11.4",
     "ffsubsync>=0.5.1",
+    "numpy>=2.5.3",
     "requests>=2.34.2",
     "srt>=3.5.3",
 ]

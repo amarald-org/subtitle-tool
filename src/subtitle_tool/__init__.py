@@ -180,7 +180,33 @@ def default_backend() -> str:
     return "deepl" if os.environ.get("DEEPL_API_KEY") else "google"
 
 
+def models_command(argv: list[str]) -> None:
+    """subtitle-tool models [--delete NAME|all]: list or remove downloaded Whisper models."""
+    from .transcribe import delete_model, downloaded_models
+
+    p = argparse.ArgumentParser(prog="subtitle-tool models", description="Downloaded Whisper models")
+    p.add_argument("--delete", metavar="NAME", help="model name (e.g. large-v3-turbo) or 'all'")
+    args = p.parse_args(argv)
+    models = downloaded_models()
+    if args.delete:
+        targets = [m for m in models if args.delete in ("all", m[0], m[1])]
+        if not targets:
+            raise SystemExit(f"No downloaded model called '{args.delete}'.")
+        for name, repo, _size in targets:
+            print(f"Deleted {name}, freed {delete_model(repo) / 1e9:.2f} GB")
+        return
+    if not models:
+        print("No Whisper models downloaded yet.")
+    for name, _repo, size in models:
+        print(f"{name:16} {size / 1e9:.2f} GB")
+    if models:
+        print("\nDelete one with: subtitle-tool models --delete NAME   (or --delete all)")
+
+
 def main() -> None:
+    if sys.argv[1:2] == ["models"]:
+        models_command(sys.argv[2:])
+        return
     if sys.argv[1:2] == ["gui"]:
         try:
             from .gui import main as gui_main
@@ -196,7 +222,8 @@ def main() -> None:
         prog="subtitle-tool",
         description="Find subtitles for a movie file, sync them to its audio, and "
         "optionally add a Finnish translation stacked under the English. "
-        "Run `subtitle-tool gui [movie]` for the editor window.",
+        "Run `subtitle-tool gui [movie]` for the editor window, "
+        "`subtitle-tool models` to list or delete downloaded Whisper models.",
     )
     p.add_argument("video", help="path to the movie file")
     p.add_argument("--title", help="movie name to search (default: guessed from filename)")

@@ -1864,11 +1864,13 @@ wheels = [
 
 [[package]]
 name = "subtitle-tool"
-version = "0.1.0"
+version = "0.0.1"
 source = { editable = "." }
 dependencies = [
+    { name = "av" },
     { name = "deep-translator" },
     { name = "ffsubsync" },
+    { name = "numpy" },
     { name = "requests" },
     { name = "srt" },
 ]
@@ -1888,9 +1890,11 @@ offline = [
 [package.metadata]
 requires-dist = [
     { name = "argostranslate", marker = "extra == 'offline'", specifier = ">=1.9" },
+    { name = "av", specifier = ">=18.1.0" },
     { name = "deep-translator", specifier = ">=1.11.4" },
     { name = "faster-whisper", marker = "extra == 'auto'", specifier = ">=1.2.1" },
     { name = "ffsubsync", specifier = ">=0.5.1" },
+    { name = "numpy", specifier = ">=2.5.3" },
     { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin' and extra == 'gui'", specifier = ">=10" },
     { name = "pyside6-addons", marker = "extra == 'gui'", specifier = ">=6.11.2" },
     { name = "requests", specifier = ">=2.34.2" },
