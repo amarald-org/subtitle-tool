@@ -10,8 +10,7 @@ then read the original and your language together.**
 [![Release](https://img.shields.io/github/v/release/amarald-org/subtitle-tool?include_prereleases&label=download)](https://github.com/amarald-org/subtitle-tool/releases/latest)
 ![Platforms](https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-lightgrey)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-<!-- Buy Me a Coffee: replace YOUR_NAME with your page name -->
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-☕-FFDD00?logo=buymeacoffee&logoColor=black)](https://www.buymeacoffee.com/YOUR_NAME)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-☕-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/aaroq)
 
 <img src="docs/screenshot.png" width="860" alt="Subtitle Tool: video with English and Finnish subtitles, editable subtitle list on the right">
 
@@ -145,6 +144,6 @@ Building the apps yourself: `packaging/build_app.sh`.
 ## Support
 
 Subtitle Tool is free and open source. If it helps you learn a language,
-you can [buy me a coffee](https://www.buymeacoffee.com/YOUR_NAME) ☕
+you can [buy me a coffee](https://buymeacoffee.com/aaroq) ☕
 
 MIT licensed. Movies are never downloaded by this tool.
