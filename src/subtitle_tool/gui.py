@@ -64,6 +64,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QTextEdit,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -255,6 +256,18 @@ def _html(text: str) -> str:
     return out.replace("\n", "<br>")
 
 
+def msg_box(icon, parent, title: str, text: str, buttons=None):
+    """QMessageBox drawn by Qt, not macOS: the native alert crashes on macOS 27
+    while rendering its icon (CoreUI vector glyph exception)."""
+    box = QMessageBox(icon, title, text, parent=parent)
+    box.setOption(QMessageBox.Option.DontUseNativeDialog, True)
+    if buttons is None:
+        buttons = QMessageBox.Yes | QMessageBox.No if icon == QMessageBox.Question else QMessageBox.Ok
+    box.setStandardButtons(buttons)
+    box.exec()
+    return box.standardButton(box.clickedButton())
+
+
 # --- dialogs -------------------------------------------------------------------
 
 
@@ -429,7 +442,27 @@ class MainWindow(QMainWindow):
         self.audio.setVolume(0.8)
 
         controls = QHBoxLayout()
+        mod = "⌘" if MAC else "Ctrl+"
+        seek_buttons = []
+        for label, ms, keys, tip in [
+            ("−5s", -5000, ("Ctrl+Shift+J", "Ctrl+Shift+Left"), f"{mod}⇧J"),
+            ("−1s", -1000, ("Ctrl+J", "Ctrl+Left"), f"{mod}J"),
+            ("−0.2s", -200, ("Ctrl+Alt+J", "Alt+Left"), f"{mod}⌥J"),
+            ("+0.2s", 200, ("Ctrl+Alt+L", "Alt+Right"), f"{mod}⌥L"),
+            ("+1s", 1000, ("Ctrl+L", "Ctrl+Right"), f"{mod}L"),
+            ("+5s", 5000, ("Ctrl+Shift+L", "Ctrl+Shift+Right"), f"{mod}⇧L"),
+        ]:
+            a = self._action(label, lambda _=False, d=ms: self.seek_by(d), shortcuts(*keys))
+            btn = QToolButton()
+            btn.setDefaultAction(a)
+            btn.setToolTip(f"{'Back' if ms < 0 else 'Forward'} {abs(ms) / 1000:g} s ({tip})")
+            btn.setStyleSheet(TOOLBAR_STYLE)
+            seek_buttons.append(btn)
+        for btn in seek_buttons[:3]:
+            controls.addWidget(btn)
         controls.addWidget(self.play_btn)
+        for btn in seek_buttons[3:]:
+            controls.addWidget(btn)
         controls.addWidget(self.slider, 1)
         controls.addWidget(self.time_label)
         controls.addWidget(QLabel("🔊"))
@@ -831,6 +864,10 @@ class MainWindow(QMainWindow):
 
     # playback
 
+    def seek_by(self, delta_ms: int) -> None:
+        pos = max(0, min(self.player.position() + delta_ms, self.player.duration() or 0))
+        self.player.setPosition(pos)
+
     def toggle_play(self) -> None:
         if self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
@@ -897,7 +934,7 @@ class MainWindow(QMainWindow):
         def failed(msg):
             finish()
             self.statusBar().showMessage("Failed")
-            QMessageBox.warning(self, "Something went wrong", msg)
+            msg_box(QMessageBox.Warning, self, "Something went wrong", msg)
 
         job.signals.done.connect(done)
         job.signals.failed.connect(failed)
@@ -922,7 +959,7 @@ class MainWindow(QMainWindow):
         def done(result):
             client, hits = result
             if not hits:
-                QMessageBox.information(self, "Search", "No subtitles found. Try another name.")
+                msg_box(QMessageBox.Information, self, "Search", "No subtitles found. Try another name.")
                 return
             dlg = QDialog(self)
             dlg.setWindowTitle("Pick subtitles")
@@ -958,9 +995,9 @@ class MainWindow(QMainWindow):
 
     def auto(self) -> None:
         if not self.video_path:
-            QMessageBox.information(self, "Auto", "Open a video first.")
+            msg_box(QMessageBox.Information, self, "Auto", "Open a video first.")
             return
-        if self.cues and QMessageBox.question(
+        if self.cues and msg_box(QMessageBox.Question, 
             self, "Auto", "Replace the current subtitles with automatic ones? (Undo brings them back.)"
         ) != QMessageBox.Yes:
             return
@@ -1001,13 +1038,13 @@ class MainWindow(QMainWindow):
             msg = f"Made {len(cues)} subtitles from the audio (language: {lang})."
             self.statusBar().showMessage(msg)
             if error:
-                QMessageBox.warning(self, "Translation failed", f"{msg}\n\nTranslation failed: {error}")
+                msg_box(QMessageBox.Warning, self, "Translation failed", f"{msg}\n\nTranslation failed: {error}")
 
         self.run_job("Starting automatic subtitles…", work, done)
 
     def sync(self) -> None:
         if not (self.video_path and self.cues):
-            QMessageBox.information(self, "Sync", "Open a movie and subtitles first.")
+            msg_box(QMessageBox.Information, self, "Sync", "Open a movie and subtitles first.")
             return
         video, cues = self.video_path, [replace(c) for c in self.cues]
 
@@ -1048,7 +1085,7 @@ class MainWindow(QMainWindow):
     def translate(self) -> None:
         rows = [i for i, c in enumerate(self.cues) if c.top.strip() and not c.bottom.strip()]
         if not rows:
-            QMessageBox.information(
+            msg_box(QMessageBox.Information, 
                 self, "Translate", "Every row already has a translation. Clear a cell to re-translate it."
             )
             return
@@ -1116,7 +1153,7 @@ class MainWindow(QMainWindow):
     def confirm_discard(self) -> bool:
         if not self.dirty:
             return True
-        answer = QMessageBox.question(
+        answer = msg_box(QMessageBox.Question, 
             self, "Unsaved changes", "Save your subtitle changes first?",
             QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
         )
@@ -1157,6 +1194,30 @@ def _set_os_app_name() -> None:
             pass
 
 
+def _set_dock_name() -> None:
+    """macOS names unbundled apps after the executable ("python3.14") in the Dock.
+    Rename this process in LaunchServices, like Chromium does for its helpers."""
+    if sys.platform != "darwin":
+        return
+    try:
+        import ctypes
+
+        ls = ctypes.CDLL(
+            "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/LaunchServices"
+        )
+        cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+        cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+        cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+        ls._LSGetCurrentApplicationASN.restype = ctypes.c_void_p
+        ls._LSSetApplicationInformationItem.restype = ctypes.c_int
+        ls._LSSetApplicationInformationItem.argtypes = [ctypes.c_int] + [ctypes.c_void_p] * 4
+        key = ctypes.c_void_p.in_dll(ls, "_kLSDisplayNameKey").value
+        name = cf.CFStringCreateWithCString(None, APP_NAME.encode(), 0x08000100)  # UTF-8
+        ls._LSSetApplicationInformationItem(-2, ls._LSGetCurrentApplicationASN(), key, name, None)
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     _set_os_app_name()
@@ -1166,6 +1227,7 @@ def main(argv: list[str] | None = None) -> None:
     app.setApplicationDisplayName(APP_NAME)
     app.setDesktopFileName("subtitle-tool")
     app.setWindowIcon(QIcon(str(ICON_PATH)))
+    _set_dock_name()
     load_saved_keys()
     win = MainWindow()
     win.show()

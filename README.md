@@ -105,6 +105,8 @@ jumps there, and double-clicking a cell edits it (Enter saves, Shift+Enter adds 
 
 Shortcuts (⌘ on Mac, Ctrl elsewhere; plain Ctrl also works on Mac): Space play/pause,
 S save, Z undo, Y redo, B set start, E set end, Delete removes selected rows.
+Seek: J / L back / forward 1 s, Shift+J / L 5 s, Alt+J / L 0.2 s (these work while typing a
+line too); the −5s … +5s buttons beside Play do the same.
 
 Playback uses Qt's built-in player, which ships its own FFmpeg inside the Python package,
 so nothing else needs installing. Installed through uv the Qt package is about 1 GB, because
