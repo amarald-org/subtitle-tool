@@ -54,10 +54,10 @@ export DEEPL_API_KEY=...
 
 ```sh
 # English subs, synced to the movie
-subtitle-tool "~/Movies/The Matrix (1999)/The.Matrix.1999.mkv"
+subtitle-tool "$HOME/Movies/The Matrix (1999)/The.Matrix.1999.mkv"
 
 # Plus Finnish translation and dual-language files
-subtitle-tool "~/Movies/The Matrix (1999)/The.Matrix.1999.mkv" --translate --backend deepl
+subtitle-tool "$HOME/Movies/The Matrix (1999)/The.Matrix.1999.mkv" --translate --backend deepl
 
 # Another language: any code DeepL/Google supports
 subtitle-tool movie.mkv --translate --backend deepl --target sv
