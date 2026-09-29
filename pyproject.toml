@@ -36,3 +36,8 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = []
+
+[tool.uv]
+# argostranslate pins stanza==1.10.1, which has a pickle RCE (GHSA-v5jw-96jm-7h2c).
+# Force the patched release until argostranslate updates its pin.
+override-dependencies = ["stanza>=1.12.2"]
