@@ -29,7 +29,7 @@ from PySide6.QtCore import (
     QUrl,
     Signal,
 )
-from PySide6.QtGui import QAction, QBrush, QColor, QKeySequence, QPalette
+from PySide6.QtGui import QAction, QBrush, QColor, QIcon, QKeySequence, QPalette
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from PySide6.QtWidgets import (
@@ -1111,7 +1111,7 @@ class MainWindow(QMainWindow):
 
     def _update_title(self) -> None:
         name = self.video_path.name if self.video_path else "No video"
-        self.setWindowTitle(f"{'• ' if self.dirty else ''}{name} — Subtitle Tool")
+        self.setWindowTitle(f"{'• ' if self.dirty else ''}{name}")
 
     def confirm_discard(self) -> bool:
         if not self.dirty:
@@ -1132,11 +1132,40 @@ class MainWindow(QMainWindow):
             event.ignore()
 
 
+ICON_PATH = Path(__file__).with_name("assets") / "icon.svg"
+APP_NAME = "Subtitle Tool"
+
+
+def _set_os_app_name() -> None:
+    """Show 'Subtitle Tool' instead of 'Python' in the Dock / taskbar."""
+    if sys.platform == "darwin":
+        try:
+            from Foundation import NSBundle
+
+            info = NSBundle.mainBundle().localizedInfoDictionary() or NSBundle.mainBundle().infoDictionary()
+            if info is not None:
+                info["CFBundleName"] = APP_NAME
+        except Exception:
+            pass
+    elif sys.platform == "win32":
+        try:
+            import ctypes
+
+            # Own taskbar group and icon instead of python.exe's.
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("aaro.subtitle-tool")
+        except Exception:
+            pass
+
+
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
-    app = QApplication.instance() or QApplication(sys.argv[:1])
+    _set_os_app_name()
+    app = QApplication.instance() or QApplication([APP_NAME])
     app.setOrganizationName("subtitle-tool")
-    app.setApplicationName("Subtitle Tool")
+    app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_NAME)
+    app.setDesktopFileName("subtitle-tool")
+    app.setWindowIcon(QIcon(str(ICON_PATH)))
     load_saved_keys()
     win = MainWindow()
     win.show()

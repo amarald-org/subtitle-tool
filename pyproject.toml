@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 offline = ["argostranslate>=1.9"]
 gui = [
+    "pyobjc-framework-cocoa>=10; sys_platform == 'darwin'",
     "pyside6-addons>=6.11.2",
 ]
 auto = [
