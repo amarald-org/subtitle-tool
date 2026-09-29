@@ -4,3 +4,6 @@ __pycache__/
 *.srt
 *.ass
 !tests/**/*.srt
+build/
+dist/
+*.spec

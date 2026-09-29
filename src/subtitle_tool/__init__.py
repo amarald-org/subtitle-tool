@@ -7,6 +7,7 @@ import os
 import re
 import sys
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 
 import srt
@@ -73,6 +74,65 @@ def run(args) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     base = out_dir / video.stem
 
+    if args.auto:
+        lang, synced = auto_subtitles(args, video, base)
+    else:
+        args.lang = args.lang or "en"
+        lang, synced = args.lang, fetch_or_local(args, video, base)
+
+    if not args.translate:
+        return
+
+    subs = list(srt.parse(synced.read_text(encoding="utf-8")))
+    from .translate import translate_lines
+
+    log(f"Translating {len(subs)} lines from '{lang}' to '{args.target}' with {args.backend}...")
+    try:
+        fi = translate_lines(
+            [s.content for s in subs],
+            target=args.target,
+            backend=args.backend,
+            progress=lambda d, t: log(f"  {d}/{t}"),
+            source=lang,
+        )
+    except Exception as e:
+        raise SystemExit(
+            f"Translation failed ({type(e).__name__}: {e}).\n"
+            f"The subtitles are saved at {synced}. "
+            "Try --backend deepl (needs DEEPL_API_KEY) or --backend argos (offline)."
+        )
+
+    for path in write_translation_outputs(base, lang, args.target, subs, fi):
+        log(f"Wrote {path}")
+
+
+def auto_subtitles(args, video: Path, base: Path) -> tuple[str, Path]:
+    """Transcribe the audio with Whisper; timestamps come out already in sync."""
+    from .transcribe import transcribe
+
+    last = [""]
+
+    def progress(msg: str) -> None:
+        if msg != last[0]:
+            last[0] = msg
+            log(msg)
+
+    lang, lines = transcribe(video, model=args.model, language=args.lang, music=args.music, progress=progress)
+    out = Path(f"{base}.{lang}.srt")
+    out.write_text(
+        srt.compose(
+            [
+                srt.Subtitle(i + 1, timedelta(milliseconds=l.start), timedelta(milliseconds=l.end), l.text)
+                for i, l in enumerate(lines)
+            ]
+        ),
+        encoding="utf-8",
+    )
+    log(f"Detected language '{lang}'. Wrote {out} ({len(lines)} lines)")
+    return lang, out
+
+
+def fetch_or_local(args, video: Path, base: Path) -> Path:
     with tempfile.TemporaryDirectory() as tmp:
         raw = Path(tmp) / "raw.srt"
         local = Path(args.subs).expanduser() if args.subs else None
@@ -94,30 +154,7 @@ def run(args) -> None:
             log("Syncing subtitles to the audio (ffsubsync)...")
             sync_to_video(video, raw, synced)
         log(f"Wrote {synced}")
-
-    if not args.translate:
-        return
-
-    subs = list(srt.parse(synced.read_text(encoding="utf-8")))
-    from .translate import translate_lines
-
-    log(f"Translating {len(subs)} lines to '{args.target}' with {args.backend}...")
-    try:
-        fi = translate_lines(
-            [s.content for s in subs],
-            target=args.target,
-            backend=args.backend,
-            progress=lambda d, t: log(f"  {d}/{t}"),
-        )
-    except Exception as e:
-        raise SystemExit(
-            f"Translation failed ({type(e).__name__}: {e}).\n"
-            f"The synced subtitles are saved at {synced}. "
-            "Try --backend deepl (needs DEEPL_API_KEY) or --backend argos (offline)."
-        )
-
-    for path in write_translation_outputs(base, args.lang, args.target, subs, fi):
-        log(f"Wrote {path}")
+    return synced
 
 
 def write_translation_outputs(
@@ -150,7 +187,7 @@ def main() -> None:
         except ImportError as e:
             raise SystemExit(
                 f"The editor window needs the GUI extras ({e.name} missing). Reinstall with:\n"
-                "  uv tool install --force 'subtitle-tool[gui] @ git+https://github.com/aaro-cmd/subtitle-tool'"
+                "  uv tool install --force 'subtitle-tool[gui,auto] @ git+https://github.com/aaro-cmd/subtitle-tool'"
             )
 
         gui_main(sys.argv[2:])
@@ -166,7 +203,13 @@ def main() -> None:
     p.add_argument("--subs", help="use this subtitle file (default: movie.en.srt or movie.srt next to the video, else search)")
     p.add_argument("--search", action="store_true",
                    help="search OpenSubtitles even if movie.srt / movie.en.srt already exists")
-    p.add_argument("--lang", default="en", help="subtitle language to fetch (default: en)")
+    p.add_argument("--lang", help="subtitle language: to fetch (default: en), or spoken in the video with --auto "
+                   "(default: detect)")
+    p.add_argument("-a", "--auto", action="store_true",
+                   help="make subtitles from the audio with Whisper instead of searching (add -t to translate)")
+    p.add_argument("--model", default="small",
+                   help="Whisper model for --auto: tiny, base, small (default), medium, large-v3-turbo")
+    p.add_argument("--music", action="store_true", help="--auto tuned for songs and music videos")
     p.add_argument("--pick", action="store_true", help="choose from search results interactively")
     p.add_argument("--no-sync", "--nosync", dest="no_sync", action="store_true", help="skip audio sync")
     p.add_argument("-t", "--translate", action="store_true", help="also translate and write dual-language subs")

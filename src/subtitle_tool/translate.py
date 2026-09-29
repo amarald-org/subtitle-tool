@@ -21,11 +21,11 @@ def _clean(text: str) -> str:
     return TAG_RE.sub("", text).strip()
 
 
-def _make_backend(name: str, target: str):
+def _make_backend(name: str, target: str, source: str | None = None):
     if name == "deepl":
-        return _DeeplBackend(target)
+        return _DeeplBackend(target, source)
     if name == "argos":
-        return _ArgosBackend(target)
+        return _ArgosBackend(target, source or "en")
     from deep_translator import GoogleTranslator
 
     return GoogleTranslator(source="auto", target=target)
@@ -36,7 +36,7 @@ class _DeeplBackend:
 
     MAX_TEXTS = 50
 
-    def __init__(self, target: str):
+    def __init__(self, target: str, source: str | None = None):
         import requests
 
         key = (os.environ.get("DEEPL_API_KEY") or "").strip()
@@ -45,6 +45,7 @@ class _DeeplBackend:
         host = "api-free.deepl.com" if key.endswith(":fx") else "api.deepl.com"
         self.url = f"https://{host}/v2/translate"
         self.target = target.upper()
+        self.source = source.upper() if source else None
         self.session = requests.Session()
         self.session.headers["Authorization"] = f"DeepL-Auth-Key {key}"
 
@@ -54,7 +55,8 @@ class _DeeplBackend:
             chunk = texts[i : i + self.MAX_TEXTS]
             r = self.session.post(
                 self.url,
-                json={"text": chunk, "source_lang": "EN", "target_lang": self.target},
+                json={"text": chunk, "target_lang": self.target}
+                | ({"source_lang": self.source} if self.source else {}),
                 timeout=60,
             )
             if r.status_code == 403:
@@ -67,24 +69,25 @@ class _DeeplBackend:
 
 
 class _ArgosBackend:
-    def __init__(self, target: str):
+    def __init__(self, target: str, source: str = "en"):
         try:
             import argostranslate.package as pkg
             import argostranslate.translate as tr
         except ImportError as e:
             raise RuntimeError("Offline backend not installed. Run: uv sync --extra offline") from e
         installed = {(l.from_code, l.to_code) for l in pkg.get_installed_packages()}
-        if ("en", target) not in installed:
+        self.source = source
+        if (source, target) not in installed:
             pkg.update_package_index()
-            match = [p for p in pkg.get_available_packages() if p.from_code == "en" and p.to_code == target]
+            match = [p for p in pkg.get_available_packages() if p.from_code == source and p.to_code == target]
             if not match:
-                raise RuntimeError(f"No offline en->{target} model available")
+                raise RuntimeError(f"No offline {source}->{target} model available")
             pkg.install_from_path(match[0].download())
         self._tr = tr
         self.target = target
 
     def translate(self, text: str) -> str:
-        return self._tr.translate(text, "en", self.target)
+        return self._tr.translate(text, self.source, self.target)
 
 
 def _translate_chunk(backend, texts: list[str]) -> list[str]:
@@ -105,9 +108,13 @@ def _translate_chunk(backend, texts: list[str]) -> list[str]:
 
 
 def translate_lines(
-    texts: list[str], target: str = "fi", backend: str = "google", progress=None
+    texts: list[str],
+    target: str = "fi",
+    backend: str = "google",
+    progress=None,
+    source: str | None = None,
 ) -> list[str]:
-    tr = _make_backend(backend, target)
+    tr = _make_backend(backend, target, source)
     cleaned = [_clean(t).replace("\n", " ") for t in texts]
     if hasattr(tr, "translate_many"):
         result = []

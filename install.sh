@@ -41,7 +41,7 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
 fi
 
 echo "Installing subtitle-tool from $SRC..."
-uv tool install --force "subtitle-tool[gui] @ $SRC"
+uv tool install --force "subtitle-tool[gui,auto] @ $SRC"
 uv tool update-shell >/dev/null 2>&1 || true
 
 cat <<'MSG'

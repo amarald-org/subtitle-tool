@@ -19,6 +19,9 @@ offline = ["argostranslate>=1.9"]
 gui = [
     "pyside6-addons>=6.11.2",
 ]
+auto = [
+    "faster-whisper>=1.2.1",
+]
 
 [project.scripts]
 subtitle-tool = "subtitle_tool:main"
@@ -26,3 +29,6 @@ subtitle-tool = "subtitle_tool:main"
 [build-system]
 requires = ["uv_build>=0.12.19,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = []

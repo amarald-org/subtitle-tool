@@ -63,6 +63,21 @@ subtitle-tool "$HOME/Movies/The Matrix (1999)/The.Matrix.1999.mkv" --translate -
 subtitle-tool movie.mkv --translate --backend deepl --target sv
 ```
 
+### Automatic subtitles (Whisper)
+
+For your own videos, YouTube downloads or songs with no subtitles online:
+
+```sh
+subtitle-tool video.webm --auto              # transcribe; language is detected
+subtitle-tool video.webm --auto -t           # transcribe + translate to Finnish
+subtitle-tool song.mp3 --auto -t --music     # tuned for singing
+subtitle-tool video.webm --auto --model large-v3-turbo   # slower, most accurate
+```
+
+This uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) on your own computer
+(no upload, no key). The model downloads once on first use: `small` (default) is 480 MB,
+`large-v3-turbo` 1.6 GB. Timestamps come from the audio, so no sync step is needed.
+
 If `movie.en.srt` or `movie.srt` already sits next to the video, it is used instead of
 searching (pass `--search` to force a new download). `--subs file.srt` picks a specific file.
 Syncing still runs by default; it is quick and leaves already-correct subtitles alone.
@@ -74,16 +89,27 @@ Use `--nosync` to skip it.
 subtitle-tool gui "$HOME/Movies/The Matrix (1999)/The.Matrix.1999.mkv"
 ```
 
-The movie plays on the left; the right side lists every subtitle with its times, the English
+The video plays on the left; the right side lists every subtitle with its times, the original
 line and the translation (in a different colour). The list follows playback, clicking a row
-jumps there, and double-clicking a cell edits it (Enter saves, Shift+Enter adds a line,
-Space plays/pauses). The toolbar has Search, Sync, Shift, the translation service and
-language, Translate (fills empty rows, so clear a cell to re-translate it), Save and Keys.
-Save writes the same files as the command line. API keys entered under Keys are remembered.
+jumps there, and double-clicking a cell edits it (Enter saves, Shift+Enter adds a line).
+
+| Button | What it does |
+| --- | --- |
+| ✨ Auto | Subtitles from the audio with Whisper, plus the translation |
+| Search / Sync / Shift | Find subtitles online, align them to the audio, move them all |
+| ⏺ Set start / ⏹ Set end | Write subtitles by hand: start a line at the current moment, type, then end it |
+| ◀ Undo / Redo ▶ | Step back and forward through changes |
+| Translate | Fill empty translation cells (clear a cell to re-translate it) |
+| Save | Write the same files as the command line |
+| Keys… | OpenSubtitles and DeepL keys, remembered by the app |
+
+Shortcuts (⌘ on Mac, Ctrl elsewhere; plain Ctrl also works on Mac): Space play/pause,
+S save, Z undo, Y redo, B set start, E set end, Delete removes selected rows.
 
 Playback uses Qt's built-in player, which ships its own FFmpeg inside the Python package,
-so nothing else needs installing. The GUI adds roughly 1 GB of Qt libraries; the install
-scripts include it.
+so nothing else needs installing. Installed through uv the Qt package is about 1 GB, because
+PyPI ships Qt as one big bundle. `packaging/build_app.sh` builds a standalone app instead
+(about 115 MB zipped, Whisper included) that people can download without Python.
 
 Other flags: `--title "The Matrix"` to override the search, `--pick` to choose from
 results, `--nosync`, `--backend deepl|google|argos`, `-o outdir`.

@@ -13,7 +13,7 @@ import re
 import sys
 import tempfile
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from pathlib import Path
 
@@ -55,6 +55,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QSplitter,
     QStyle,
@@ -69,7 +70,7 @@ from PySide6.QtWidgets import (
 
 from . import default_backend, find_local_subs, guess_title, read_text, write_translation_outputs
 
-VIDEO_FILTER = "Video (*.mkv *.mp4 *.m4v *.avi *.mov *.webm);;All files (*)"
+VIDEO_FILTER = "Video or audio (*.mkv *.mp4 *.m4v *.avi *.mov *.webm *.mp3 *.m4a *.wav *.flac *.ogg);;All files (*)"
 SUB_FILTER = "Subtitles (*.srt);;All files (*)"
 COL_START, COL_END, COL_TOP, COL_BOTTOM = range(4)
 KEY_SETTINGS = ("OPENSUBTITLES_API_KEY", "OPENSUBTITLES_USERNAME", "OPENSUBTITLES_PASSWORD", "DEEPL_API_KEY")
@@ -121,13 +122,27 @@ def plain(text: str) -> str:
 class MultilineDelegate(QStyledItemDelegate):
     """Edit cue text in a multi-line box. Enter saves, Shift+Enter adds a line."""
 
+    active: QPlainTextEdit | None = None
+
     def createEditor(self, parent, option, index):
         editor = QPlainTextEdit(parent)
         editor.setTabChangesFocus(True)
+        self.active = editor
+        editor.destroyed.connect(lambda *_: setattr(self, "active", None))
         return editor
 
+    def commit_active(self) -> None:
+        if self.active is not None:
+            editor, self.active = self.active, None
+            self.commitData.emit(editor)
+            self.closeEditor.emit(editor)
+
     def setEditorData(self, editor, index):
-        editor.setPlainText(index.data() or "")
+        # Only fill once: playback highlighting touches the row while you type,
+        # and Qt would otherwise reset the editor to the old text.
+        if not editor.property("filled"):
+            editor.setProperty("filled", True)
+            editor.setPlainText(index.data() or "")
 
     def setModelData(self, editor, model, index):
         model.setData(index, editor.toPlainText().strip())
@@ -287,17 +302,108 @@ def load_saved_keys() -> None:
 
 # --- main window -----------------------------------------------------------------
 
+LANGUAGES = [
+    ("fi", "Finnish"), ("en", "English"), ("sv", "Swedish"), ("et", "Estonian"),
+    ("de", "German"), ("fr", "French"), ("es", "Spanish"), ("it", "Italian"),
+    ("pt", "Portuguese"), ("nl", "Dutch"), ("da", "Danish"), ("nb", "Norwegian"),
+    ("pl", "Polish"), ("ru", "Russian"), ("uk", "Ukrainian"), ("tr", "Turkish"),
+    ("el", "Greek"), ("cs", "Czech"), ("hu", "Hungarian"), ("ja", "Japanese"),
+    ("ko", "Korean"), ("zh", "Chinese"), ("ar", "Arabic"), ("id", "Indonesian"),
+]
+MAC = sys.platform == "darwin"
+
+TOOLBAR_STYLE = """
+QToolBar { spacing: 3px; padding: 3px; }
+QToolButton { padding: 4px 9px; border: 1px solid transparent; border-radius: 6px; }
+QToolButton:hover { background: rgba(128, 128, 128, 0.22); border-color: rgba(128, 128, 128, 0.35); }
+QToolButton:pressed { background: rgba(70, 130, 230, 0.45); border-color: rgba(70, 130, 230, 0.8); }
+QToolButton:disabled { color: rgba(128, 128, 128, 0.6); }
+"""
+
+
+def shortcuts(*keys) -> list[QKeySequence]:
+    """Standard keys plus the literal Ctrl combos on macOS (where Qt's Ctrl means Cmd)."""
+    seqs, seen = [], set()
+    for k in keys:
+        if k is None:
+            continue
+        seq = QKeySequence(k)
+        name = seq.toString()
+        if name and name not in seen:
+            seen.add(name)
+            seqs.append(seq)
+    return seqs
+
+
+def lang_combo(default: str, auto_label: str | None = None) -> QComboBox:
+    box = QComboBox()
+    box.setEditable(True)
+    if auto_label:
+        box.addItem(auto_label)
+    for code, name in LANGUAGES:
+        box.addItem(f"{code} – {name}")
+    if default:
+        box.setCurrentIndex(box.findText(default, Qt.MatchStartsWith))
+    box.setToolTip("Pick a language or type any language code")
+    return box
+
+
+def combo_code(box: QComboBox) -> str | None:
+    text = box.currentText().strip()
+    if not text or text.lower().startswith("auto"):
+        return None
+    return text.split()[0].lower()
+
+
+class AutoDialog(QDialog):
+    def __init__(self, parent, target: str, backend: str):
+        super().__init__(parent)
+        self.setWindowTitle("Automatic subtitles")
+        form = QFormLayout(self)
+        form.addRow(QLabel(
+            "Listens to the audio with Whisper (runs on this computer) and writes\n"
+            "subtitles with timestamps. The model downloads once on first use."
+        ))
+        self.model = QComboBox()
+        for name, note in [
+            ("tiny", "fastest, rough"), ("base", "fast"), ("small", "good, 480 MB"),
+            ("medium", "better, 1.5 GB"), ("large-v3-turbo", "best, 1.6 GB"),
+        ]:
+            self.model.addItem(f"{name} – {note}", name)
+        self.model.setCurrentIndex(QSettings().value("auto/model_index", 2, type=int))
+        form.addRow("Accuracy", self.model)
+        self.lang = lang_combo("", auto_label="Auto-detect")
+        form.addRow("Spoken language", self.lang)
+        self.music = QCheckBox("Song or music video (keeps sung parts)")
+        form.addRow(self.music)
+        self.translate = QCheckBox(f"Also translate to '{target}' with {backend}")
+        self.translate.setChecked(True)
+        form.addRow(self.translate)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Start")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def accept(self):
+        QSettings().setValue("auto/model_index", self.model.currentIndex())
+        super().accept()
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.resize(1400, 800)
+        self.resize(1400, 820)
         self.pool = QThreadPool.globalInstance()
         self.video_path: Path | None = None
         self.cues: list[Cue] = []
         self.starts: list[int] = []
+        self.source_lang = "en"
         self.current = -1
         self.dirty = False
+        self.open_cue: Cue | None = None  # cue started with "Set start", waiting for its end
+        self.undo_stack: list[tuple[list[Cue], str]] = []
+        self.redo_stack: list[tuple[list[Cue], str]] = []
         self._filling = False
         self._busy_jobs: list[Job] = []
 
@@ -310,6 +416,7 @@ class MainWindow(QMainWindow):
 
         self.play_btn = QPushButton()
         self.play_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self.play_btn.setToolTip("Play / pause (Space)")
         self.play_btn.clicked.connect(self.toggle_play)
         self.slider = QSlider(Qt.Horizontal)
         self.slider.sliderMoved.connect(self.player.setPosition)
@@ -334,7 +441,6 @@ class MainWindow(QMainWindow):
         lv.addLayout(controls)
 
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Start", "End", "English", "Translation"])
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(COL_START, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(COL_END, QHeaderView.ResizeToContents)
@@ -346,17 +452,42 @@ class MainWindow(QMainWindow):
         hdr.sectionResized.connect(lambda *_: self.table.resizeRowsToContents())
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
-        self.table.setItemDelegateForColumn(COL_TOP, MultilineDelegate(self.table))
-        self.table.setItemDelegateForColumn(COL_BOTTOM, MultilineDelegate(self.table))
+        self.text_delegates = [MultilineDelegate(self.table), MultilineDelegate(self.table)]
+        self.table.setItemDelegateForColumn(COL_TOP, self.text_delegates[0])
+        self.table.setItemDelegateForColumn(COL_BOTTOM, self.text_delegates[1])
         self.table.cellClicked.connect(self.on_row_clicked)
         self.table.itemChanged.connect(self.on_item_changed)
+
+        # Manual timing row under the list.
+        self.timing_bar = QToolBar()
+        self.timing_bar.setStyleSheet(TOOLBAR_STYLE)
+        mod = "⌘" if MAC else "Ctrl+"
+        self.start_act = self._action(
+            "⏺ Set start", self.set_start, shortcuts("Ctrl+B"),
+            f"New subtitle starting now, then type the text ({mod}B)", self.timing_bar,
+        )
+        self.end_act = self._action(
+            "⏹ Set end", self.set_end, shortcuts("Ctrl+E"),
+            f"End the subtitle here ({mod}E)", self.timing_bar,
+        )
+        del_act = self._action(
+            "Delete row", self.delete_rows, shortcuts(QKeySequence.Delete, "Backspace"),
+            "Delete the selected subtitles (Delete)", self.timing_bar,
+        )
+        del_act.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+        self.table.addAction(del_act)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.timing_bar.addWidget(spacer)
         self.follow = QCheckBox("Follow playback")
         self.follow.setChecked(True)
+        self.timing_bar.addWidget(self.follow)
+
         right = QWidget()
         rv = QVBoxLayout(right)
         rv.setContentsMargins(0, 0, 0, 0)
         rv.addWidget(self.table, 1)
-        rv.addWidget(self.follow)
+        rv.addWidget(self.timing_bar)
 
         split = QSplitter()
         split.addWidget(left)
@@ -371,51 +502,122 @@ class MainWindow(QMainWindow):
         self.current_bg = QColor(80, 120, 200, 90)
 
         self._build_toolbar()
+        self._build_menu()
+        self._update_headers()
         self.player.positionChanged.connect(self.on_position)
         self.player.durationChanged.connect(lambda d: self.slider.setRange(0, d))
         self.player.playbackStateChanged.connect(self._update_play_icon)
         self.player.errorOccurred.connect(lambda _e, msg: self.statusBar().showMessage(f"Player: {msg}"))
         QApplication.instance().installEventFilter(self)
+        self._update_undo_actions()
         self._update_title()
 
     # toolbar & menus
 
+    def _action(self, text, slot, keys=None, tip=None, bar=None) -> QAction:
+        a = QAction(text, self)
+        a.triggered.connect(slot)
+        if keys:
+            a.setShortcuts(keys)
+        if tip:
+            a.setToolTip(tip)
+        if bar is not None:
+            bar.addAction(a)
+        self.addAction(a)
+        return a
+
     def _build_toolbar(self) -> None:
         tb = QToolBar("Main")
         tb.setMovable(False)
+        tb.setStyleSheet(TOOLBAR_STYLE)
         self.addToolBar(tb)
+        mod = "⌘" if MAC else "Ctrl+"
 
-        def act(text, slot, shortcut=None, tip=None):
-            a = QAction(text, self)
-            a.triggered.connect(slot)
-            if shortcut:
-                a.setShortcut(QKeySequence(shortcut))
-            if tip:
-                a.setToolTip(tip)
-            tb.addAction(a)
-            return a
-
-        act("Open movie", self.open_video_dialog, QKeySequence.Open)
-        act("Open subtitles", self.open_subs_dialog, tip="Load an English .srt")
-        act("Open translation", self.open_translation_dialog, tip="Load a translated .srt into the right column")
+        self._action("Open movie", self.open_video_dialog, shortcuts(QKeySequence.Open), f"Open a video ({mod}O)", tb)
         tb.addSeparator()
-        act("Search", self.search, tip="Find subtitles on OpenSubtitles")
-        act("Sync", self.sync, tip="Align subtitle timing to the movie's audio (ffsubsync)")
-        act("Shift…", self.shift, tip="Move all subtitles earlier or later")
+        self._action("Search", self.search, None, "Find subtitles on OpenSubtitles", tb)
+        self._action("✨ Auto", self.auto, None, "Make subtitles from the audio with Whisper", tb)
+        self._action("Sync", self.sync, None, "Align subtitle timing to the audio (ffsubsync)", tb)
+        self._action("Shift…", self.shift, None, "Move all subtitles earlier or later", tb)
+        tb.addSeparator()
+        self.undo_act = self._action(
+            "◀ Undo", self.undo,
+            shortcuts(QKeySequence.Undo, "Ctrl+Z", "Meta+Z" if MAC else None), f"Undo ({mod}Z)", tb,
+        )
+        self.redo_act = self._action(
+            "Redo ▶", self.redo,
+            shortcuts(QKeySequence.Redo, "Ctrl+Y", "Meta+Y" if MAC else None), f"Redo ({mod}Y)", tb,
+        )
         tb.addSeparator()
         self.backend = QComboBox()
         self.backend.addItems(["deepl", "google", "argos"])
         self.backend.setCurrentText(default_backend())
         self.backend.setToolTip("Translation service")
         tb.addWidget(self.backend)
-        self.target = QLineEdit("fi")
-        self.target.setMaximumWidth(40)
-        self.target.setToolTip("Target language code (fi, sv, de, …)")
+        self.target = lang_combo("fi")
+        self.target.setMinimumContentsLength(12)
+        self.target.currentTextChanged.connect(lambda _t: self._update_headers())
         tb.addWidget(self.target)
-        act("Translate", self.translate, tip="Translate rows whose translation is empty")
+        self._action("Translate", self.translate, None, "Translate rows whose translation is empty", tb)
         tb.addSeparator()
-        act("Save", self.save, QKeySequence.Save)
-        act("Keys…", self.edit_keys, tip="OpenSubtitles and DeepL API keys")
+        self._action(
+            "Save", self.save, shortcuts(QKeySequence.Save, "Ctrl+S", "Meta+S" if MAC else None),
+            f"Save subtitle files next to the movie ({mod}S)", tb,
+        )
+        self._action("Keys…", self.edit_keys, None, "OpenSubtitles and DeepL API keys", tb)
+
+    def _build_menu(self) -> None:
+        file_menu = self.menuBar().addMenu("File")
+        for text, slot in [
+            ("Open movie…", self.open_video_dialog),
+            ("Open subtitles…", self.open_subs_dialog),
+            ("Open translation…", self.open_translation_dialog),
+            ("Save", self.save),
+        ]:
+            a = QAction(text, self)
+            a.triggered.connect(slot)
+            file_menu.addAction(a)
+        edit_menu = self.menuBar().addMenu("Edit")
+        for a in (self.undo_act, self.redo_act, self.start_act, self.end_act):
+            edit_menu.addAction(a)
+
+    def target_code(self) -> str:
+        return combo_code(self.target) or "fi"
+
+    def _update_headers(self) -> None:
+        self.table.setHorizontalHeaderLabels(
+            ["Start", "End", f"Original ({self.source_lang})", f"Translation ({self.target_code()})"]
+        )
+
+    # undo / redo
+
+    def checkpoint(self, label: str = "") -> None:
+        """Remember the current cues before a change."""
+        self.undo_stack.append(([replace(c) for c in self.cues], label))
+        del self.undo_stack[:-200]
+        self.redo_stack.clear()
+        self._update_undo_actions()
+
+    def undo(self) -> None:
+        self._restore(self.undo_stack, self.redo_stack, "Undid")
+
+    def redo(self) -> None:
+        self._restore(self.redo_stack, self.undo_stack, "Redid")
+
+    def _restore(self, src, dst, verb) -> None:
+        if not src:
+            return
+        cues, label = src.pop()
+        dst.append(([replace(c) for c in self.cues], label))
+        self.open_cue = None
+        self.set_cues(cues)
+        self.mark_dirty()
+        self._update_undo_actions()
+        self.statusBar().showMessage(f"{verb} {label}".strip())
+
+    def _update_undo_actions(self) -> None:
+        self.undo_act.setEnabled(bool(self.undo_stack))
+        self.redo_act.setEnabled(bool(self.redo_stack))
 
     # file loading
 
@@ -429,23 +631,31 @@ class MainWindow(QMainWindow):
             return
         self.video_path = path
         self.player.setSource(QUrl.fromLocalFile(str(path)))
+        self.source_lang = "en"
+        self.open_cue = None
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+        self._update_undo_actions()
         self.set_cues([])
-        target = self.target.text().strip() or "fi"
         top = find_local_subs(path, "en")
         if top:
             self.set_cues(parse_srt(read_text(top)))
             self.statusBar().showMessage(f"Loaded {top.name}")
-            bottom = path.with_name(f"{path.stem}.{target}.srt")
+            bottom = path.with_name(f"{path.stem}.{self.target_code()}.srt")
             if bottom.exists():
                 self.merge_translation(parse_srt(read_text(bottom)))
         else:
-            self.statusBar().showMessage("No subtitles next to the movie. Use Search or Open subtitles.")
+            self.statusBar().showMessage(
+                "No subtitles next to the video. Use Auto, Search, File › Open subtitles, or Set start."
+            )
+        self._update_headers()
         self.dirty = False
         self._update_title()
 
     def open_subs_dialog(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open subtitles", self._dir(), SUB_FILTER)
         if path:
+            self.checkpoint("open subtitles")
             old = self.cues
             self.set_cues(parse_srt(read_text(Path(path))))
             if any(c.bottom for c in old) and len(old) == len(self.cues):
@@ -457,6 +667,7 @@ class MainWindow(QMainWindow):
     def open_translation_dialog(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open translation", self._dir(), SUB_FILTER)
         if path:
+            self.checkpoint("open translation")
             self.merge_translation(parse_srt(read_text(Path(path))))
             self.mark_dirty()
 
@@ -491,6 +702,7 @@ class MainWindow(QMainWindow):
         self.refresh_table()
 
     def refresh_table(self) -> None:
+        self.cues.sort(key=lambda c: c.start)
         self._filling = True
         self.table.setRowCount(len(self.cues))
         for row, c in enumerate(self.cues):
@@ -518,18 +730,26 @@ class MainWindow(QMainWindow):
                 self._set_cell(row, col, fmt_ms(cue.start if col == COL_START else cue.end))
                 self.statusBar().showMessage("Use the format 00:01:23,456")
                 return
+            if ms == (cue.start if col == COL_START else cue.end):
+                return
+            self.checkpoint("time edit")
             if col == COL_START:
                 cue.start = ms
             else:
                 cue.end = ms
             self._set_cell(row, col, fmt_ms(ms))
-            self.starts = [c.start for c in self.cues]
+            if col == COL_START:
+                self.refresh_table()  # keep rows in time order
         elif col == COL_TOP:
-            if text != plain(cue.top):  # untouched rows keep their italics
-                cue.top = text
+            if text == plain(cue.top):  # untouched rows keep their italics
+                return
+            self.checkpoint("text edit")
+            cue.top = text
         else:
-            if text != plain(cue.bottom):
-                cue.bottom = text
+            if text == plain(cue.bottom):
+                return
+            self.checkpoint("translation edit")
+            cue.bottom = text
         self.table.resizeRowToContents(row)
         self.mark_dirty()
         self.current = -1
@@ -543,6 +763,71 @@ class MainWindow(QMainWindow):
     def on_row_clicked(self, row: int, _col: int) -> None:
         if 0 <= row < len(self.cues):
             self.player.setPosition(self.cues[row].start)
+
+    # manual timing
+
+    def _commit_editor(self) -> None:
+        """Save whatever is being typed in a cell before acting on the cues."""
+        if self.table.state() != QAbstractItemView.EditingState:
+            return
+        for delegate in self.text_delegates:
+            delegate.commit_active()
+        if self.table.state() == QAbstractItemView.EditingState:
+            self.table.setFocus()  # a time cell: focus-out saves it
+
+    def set_start(self) -> None:
+        if not self.video_path:
+            return
+        self._commit_editor()
+        pos = self.player.position()
+        if self.open_cue in self.cues and self.open_cue.end <= self.open_cue.start + 1:
+            self.open_cue.end = max(self.open_cue.start + 500, pos)  # close the previous one
+        self.checkpoint("set start")
+        cue = Cue(pos, pos + 3000, "")
+        self.cues.append(cue)
+        self.open_cue = cue
+        self.refresh_table()
+        row = self.cues.index(cue)
+        self.table.selectRow(row)
+        self.table.scrollToItem(self.table.item(row, COL_TOP))
+        self.table.editItem(self.table.item(row, COL_TOP))
+        self.mark_dirty()
+        self.statusBar().showMessage(
+            "Type the line (Tab moves on, Enter saves). Press Set end when it should disappear."
+        )
+
+    def set_end(self) -> None:
+        self._commit_editor()
+        pos = self.player.position()
+        if self.open_cue in self.cues:
+            cue = self.open_cue
+        elif self.current >= 0:
+            cue = self.cues[self.current]
+        elif self.table.currentRow() >= 0:
+            cue = self.cues[self.table.currentRow()]
+        else:
+            return
+        if pos <= cue.start:
+            self.statusBar().showMessage("The end has to be after the start.")
+            return
+        self.checkpoint("set end")
+        cue.end = pos
+        self.open_cue = None
+        self.refresh_table()
+        self.mark_dirty()
+        self.statusBar().showMessage(f"Subtitle ends at {fmt_ms(pos)}")
+
+    def delete_rows(self) -> None:
+        if self.table.state() == QAbstractItemView.EditingState:
+            return
+        rows = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)
+        if not rows:
+            return
+        self.checkpoint(f"delete {len(rows)} row(s)")
+        for r in rows:
+            del self.cues[r]
+        self.refresh_table()
+        self.mark_dirty()
 
     # playback
 
@@ -593,7 +878,7 @@ class MainWindow(QMainWindow):
                 return True
         return super().eventFilter(obj, event)
 
-    # actions
+    # background actions
 
     def run_job(self, label: str, fn, on_done) -> None:
         self.statusBar().showMessage(label)
@@ -664,15 +949,67 @@ class MainWindow(QMainWindow):
         self.run_job("Searching…", work, done)
 
     def _loaded_download(self, text: str, label: str) -> None:
+        self.checkpoint("download")
+        self.source_lang = "en"
+        self._update_headers()
         self.set_cues(parse_srt(text))
         self.mark_dirty()
         self.statusBar().showMessage(f"Loaded {label}. Press Sync to match it to the audio.")
+
+    def auto(self) -> None:
+        if not self.video_path:
+            QMessageBox.information(self, "Auto", "Open a video first.")
+            return
+        if self.cues and QMessageBox.question(
+            self, "Auto", "Replace the current subtitles with automatic ones? (Undo brings them back.)"
+        ) != QMessageBox.Yes:
+            return
+        backend, target = self.backend.currentText(), self.target_code()
+        dlg = AutoDialog(self, target, backend)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        video, model = self.video_path, dlg.model.currentData()
+        language, music, also_translate = combo_code(dlg.lang), dlg.music.isChecked(), dlg.translate.isChecked()
+
+        def work(progress):
+            from .transcribe import transcribe
+
+            lang, lines = transcribe(video, model=model, language=language, music=music, progress=progress)
+            cues = [Cue(l.start, l.end, l.text) for l in lines]
+            error = None
+            if also_translate and cues and lang != target:
+                from .translate import translate_lines
+
+                try:
+                    out = translate_lines(
+                        [c.top for c in cues], target=target, backend=backend, source=lang,
+                        progress=lambda d, t: progress(f"Translating… {d}/{t}"),
+                    )
+                    for c, t in zip(cues, out):
+                        c.bottom = t
+                except Exception as e:  # keep the transcription even if translation fails
+                    error = f"{type(e).__name__}: {e}"
+            return lang, cues, error
+
+        def done(result):
+            lang, cues, error = result
+            self.checkpoint("auto subtitles")
+            self.source_lang = lang
+            self._update_headers()
+            self.set_cues(cues)
+            self.mark_dirty()
+            msg = f"Made {len(cues)} subtitles from the audio (language: {lang})."
+            self.statusBar().showMessage(msg)
+            if error:
+                QMessageBox.warning(self, "Translation failed", f"{msg}\n\nTranslation failed: {error}")
+
+        self.run_job("Starting automatic subtitles…", work, done)
 
     def sync(self) -> None:
         if not (self.video_path and self.cues):
             QMessageBox.information(self, "Sync", "Open a movie and subtitles first.")
             return
-        video, cues = self.video_path, self.cues
+        video, cues = self.video_path, [replace(c) for c in self.cues]
 
         def work(_progress):
             from .sync import sync_to_video
@@ -684,6 +1021,7 @@ class MainWindow(QMainWindow):
                 return parse_srt(out.read_text(encoding="utf-8"))
 
         def done(synced: list[Cue]):
+            self.checkpoint("sync")
             if len(synced) == len(self.cues):
                 for c, s in zip(self.cues, synced):
                     c.start, c.end = s.start, s.end
@@ -700,6 +1038,7 @@ class MainWindow(QMainWindow):
             self, "Shift subtitles", "Seconds (negative = earlier):", 0.0, -3600, 3600, 2
         )
         if ok and secs:
+            self.checkpoint("shift")
             delta = int(secs * 1000)
             for c in self.cues:
                 c.start, c.end = max(0, c.start + delta), max(0, c.end + delta)
@@ -707,33 +1046,36 @@ class MainWindow(QMainWindow):
             self.mark_dirty()
 
     def translate(self) -> None:
-        rows = [i for i, c in enumerate(self.cues) if not c.bottom.strip()]
+        rows = [i for i, c in enumerate(self.cues) if c.top.strip() and not c.bottom.strip()]
         if not rows:
             QMessageBox.information(
                 self, "Translate", "Every row already has a translation. Clear a cell to re-translate it."
             )
             return
         texts = [self.cues[i].top for i in rows]
-        backend, target = self.backend.currentText(), self.target.text().strip() or "fi"
+        targets = [self.cues[i] for i in rows]
+        backend, target, source = self.backend.currentText(), self.target_code(), self.source_lang
 
         def work(progress):
             from .translate import translate_lines
 
             return translate_lines(
-                texts, target=target, backend=backend,
+                texts, target=target, backend=backend, source=source,
                 progress=lambda d, t: progress(f"Translating… {d}/{t}"),
             )
 
         def done(result: list[str]):
-            for i, t in zip(rows, result):
-                self.cues[i].bottom = t
+            self.checkpoint("translate")
+            for cue, t in zip(targets, result):
+                cue.bottom = t
             self.refresh_table()
             self.mark_dirty()
-            self.statusBar().showMessage(f"Translated {len(rows)} lines.")
+            self.statusBar().showMessage(f"Translated {len(result)} lines.")
 
         self.run_job(f"Translating {len(rows)} lines with {backend}…", work, done)
 
     def save(self) -> bool:
+        self._commit_editor()
         if not self.cues:
             return True
         if self.video_path:
@@ -743,13 +1085,12 @@ class MainWindow(QMainWindow):
             if not path:
                 return False
             base = Path(path).with_suffix("")
-        top_path = Path(f"{base}.en.srt")
+        top_path = Path(f"{base}.{self.source_lang}.srt")
         top_path.write_text(srt.compose(cues_to_srt(self.cues)), encoding="utf-8")
         written = [top_path]
         if any(c.bottom for c in self.cues):
-            target = self.target.text().strip() or "fi"
             written += write_translation_outputs(
-                base, "en", target, cues_to_srt(self.cues), [c.bottom for c in self.cues]
+                base, self.source_lang, self.target_code(), cues_to_srt(self.cues), [c.bottom for c in self.cues]
             )
         self.dirty = False
         self._update_title()
@@ -769,7 +1110,7 @@ class MainWindow(QMainWindow):
         self._update_title()
 
     def _update_title(self) -> None:
-        name = self.video_path.name if self.video_path else "No movie"
+        name = self.video_path.name if self.video_path else "No video"
         self.setWindowTitle(f"{'• ' if self.dirty else ''}{name} — Subtitle Tool")
 
     def confirm_discard(self) -> bool:

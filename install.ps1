@@ -24,7 +24,7 @@ $Src = $Repo
 if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot "pyproject.toml"))) { $Src = $PSScriptRoot }
 
 Write-Host "Installing subtitle-tool from $Src..."
-uv tool install --force "subtitle-tool[gui] @ $Src"
+uv tool install --force "subtitle-tool[gui,auto] @ $Src"
 uv tool update-shell | Out-Null
 
 Write-Host @"
