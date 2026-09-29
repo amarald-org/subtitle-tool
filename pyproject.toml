@@ -16,6 +16,9 @@ dependencies = [
 
 [project.optional-dependencies]
 offline = ["argostranslate>=1.9"]
+gui = [
+    "pyside6-addons>=6.11.2",
+]
 
 [project.scripts]
 subtitle-tool = "subtitle_tool:main"

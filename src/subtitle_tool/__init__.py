@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import tempfile
@@ -115,26 +116,50 @@ def run(args) -> None:
             "Try --backend deepl (needs DEEPL_API_KEY) or --backend argos (offline)."
         )
 
-    target_srt = Path(f"{base}.{args.target}.srt")
+    for path in write_translation_outputs(base, args.lang, args.target, subs, fi):
+        log(f"Wrote {path}")
+
+
+def write_translation_outputs(
+    base: Path, lang: str, target: str, subs: list[srt.Subtitle], translated: list[str]
+) -> list[Path]:
+    """Write movie.fi.srt, movie.en-fi.srt and movie.en-fi.ass."""
+    target_srt = Path(f"{base}.{target}.srt")
     target_srt.write_text(
-        srt.compose([srt.Subtitle(s.index, s.start, s.end, t) for s, t in zip(subs, fi)]),
+        srt.compose(
+            [srt.Subtitle(s.index, s.start, s.end, t) for s, t in zip(subs, translated)],
+            reindex=False,
+        ),
         encoding="utf-8",
     )
-    log(f"Wrote {target_srt}")
+    dual = Path(f"{base}.{lang}-{target}.srt")
+    dual.write_text(dual_srt(subs, translated), encoding="utf-8")
+    dual_a = Path(f"{base}.{lang}-{target}.ass")
+    dual_a.write_text(dual_ass(subs, translated), encoding="utf-8")
+    return [target_srt, dual, dual_a]
 
-    dual = Path(f"{base}.{args.lang}-{args.target}.srt")
-    dual.write_text(dual_srt(subs, fi), encoding="utf-8")
-    log(f"Wrote {dual}")
-    dual_a = Path(f"{base}.{args.lang}-{args.target}.ass")
-    dual_a.write_text(dual_ass(subs, fi), encoding="utf-8")
-    log(f"Wrote {dual_a}")
+
+def default_backend() -> str:
+    return "deepl" if os.environ.get("DEEPL_API_KEY") else "google"
 
 
 def main() -> None:
+    if sys.argv[1:2] == ["gui"]:
+        try:
+            from .gui import main as gui_main
+        except ImportError as e:
+            raise SystemExit(
+                f"The editor window needs the GUI extras ({e.name} missing). Reinstall with:\n"
+                "  uv tool install --force 'subtitle-tool[gui] @ git+https://github.com/aaro-cmd/subtitle-tool'"
+            )
+
+        gui_main(sys.argv[2:])
+        return
     p = argparse.ArgumentParser(
         prog="subtitle-tool",
         description="Find subtitles for a movie file, sync them to its audio, and "
-        "optionally add a Finnish translation stacked under the English.",
+        "optionally add a Finnish translation stacked under the English. "
+        "Run `subtitle-tool gui [movie]` for the editor window.",
     )
     p.add_argument("video", help="path to the movie file")
     p.add_argument("--title", help="movie name to search (default: guessed from filename)")
@@ -146,7 +171,8 @@ def main() -> None:
     p.add_argument("--no-sync", "--nosync", dest="no_sync", action="store_true", help="skip audio sync")
     p.add_argument("-t", "--translate", action="store_true", help="also translate and write dual-language subs")
     p.add_argument("--target", default="fi", help="translation language (default: fi)")
-    p.add_argument("--backend", choices=["google", "deepl", "argos"], default="google",
-                   help="google: free, no key. deepl: best Finnish, needs DEEPL_API_KEY. argos: offline")
+    p.add_argument("--backend", choices=["google", "deepl", "argos"], default=default_backend(),
+                   help="deepl: best Finnish, needs DEEPL_API_KEY (default when set). "
+                   "google: free, no key. argos: offline")
     p.add_argument("-o", "--out-dir", help="output folder (default: next to the video)")
     run(p.parse_args())

@@ -68,6 +68,23 @@ searching (pass `--search` to force a new download). `--subs file.srt` picks a s
 Syncing still runs by default; it is quick and leaves already-correct subtitles alone.
 Use `--nosync` to skip it.
 
+## Editor window
+
+```sh
+subtitle-tool gui "$HOME/Movies/The Matrix (1999)/The.Matrix.1999.mkv"
+```
+
+The movie plays on the left; the right side lists every subtitle with its times, the English
+line and the translation (in a different colour). The list follows playback, clicking a row
+jumps there, and double-clicking a cell edits it (Enter saves, Shift+Enter adds a line,
+Space plays/pauses). The toolbar has Search, Sync, Shift, the translation service and
+language, Translate (fills empty rows, so clear a cell to re-translate it), Save and Keys.
+Save writes the same files as the command line. API keys entered under Keys are remembered.
+
+Playback uses Qt's built-in player, which ships its own FFmpeg inside the Python package,
+so nothing else needs installing. The GUI adds roughly 1 GB of Qt libraries; the install
+scripts include it.
+
 Other flags: `--title "The Matrix"` to override the search, `--pick` to choose from
 results, `--nosync`, `--backend deepl|google|argos`, `-o outdir`.
 
