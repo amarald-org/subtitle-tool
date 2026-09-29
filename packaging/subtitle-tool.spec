@@ -49,7 +49,7 @@ if sys.platform == "darwin":
         coll,
         name=f"{NAME}.app",
         icon=icon,
-        bundle_identifier="io.github.aaro-cmd.subtitle-tool",
+        bundle_identifier="io.github.amarald-org.subtitle-tool",
         version=VERSION,
         info_plist={
             "CFBundleName": NAME,

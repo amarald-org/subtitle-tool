@@ -4,7 +4,7 @@
 #   curl -LsSf <raw url>/install.sh | sh
 set -eu
 
-REPO="git+https://github.com/aaro-cmd/subtitle-tool"
+REPO="git+https://github.com/amarald-org/subtitle-tool"
 
 ask() {
     # Prompt on the terminal even when the script is piped into sh.

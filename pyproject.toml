@@ -4,7 +4,7 @@ version = "0.0.1"
 description = "Find, sync and translate movie subtitles into stacked English + Finnish"
 readme = "README.md"
 authors = [
-    { name = "amarald", email = "aaro@amarald.io" }
+    { name = "amarald", email = "hei@amarald.io" }
 ]
 license = "MIT"
 requires-python = ">=3.12"

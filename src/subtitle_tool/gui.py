@@ -743,7 +743,7 @@ class MainWindow(QMainWindow):
         box.setTextFormat(Qt.RichText)
         box.setText(
             f"<b>Subtitle Tool</b> {ver}<br>Find, sync, transcribe and translate subtitles.<br><br>"
-            '<a href="https://github.com/aaro-cmd/subtitle-tool">github.com/aaro-cmd/subtitle-tool</a>'
+            '<a href="https://github.com/amarald-org/subtitle-tool">github.com/amarald-org/subtitle-tool</a>'
         )
         box.exec()
 

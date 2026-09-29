@@ -2,7 +2,7 @@
 #   .\install.ps1                    (from a clone)
 #   powershell -ExecutionPolicy ByPass -c "irm <raw url>/install.ps1 | iex"
 $ErrorActionPreference = "Stop"
-$Repo = "git+https://github.com/aaro-cmd/subtitle-tool"
+$Repo = "git+https://github.com/amarald-org/subtitle-tool"
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Host "Installing uv (Python package manager)..."

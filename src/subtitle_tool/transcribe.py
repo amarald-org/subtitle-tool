@@ -180,7 +180,7 @@ def transcribe(
     except ImportError as e:
         raise RuntimeError(
             "Automatic subtitles need the 'auto' extra: "
-            "uv tool install --force 'subtitle-tool[gui,auto] @ git+https://github.com/aaro-cmd/subtitle-tool'"
+            "uv tool install --force 'subtitle-tool[gui,auto] @ git+https://github.com/amarald-org/subtitle-tool'"
         ) from e
 
     path = ensure_model(model, progress)

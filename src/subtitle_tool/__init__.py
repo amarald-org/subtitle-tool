@@ -213,7 +213,7 @@ def main() -> None:
         except ImportError as e:
             raise SystemExit(
                 f"The editor window needs the GUI extras ({e.name} missing). Reinstall with:\n"
-                "  uv tool install --force 'subtitle-tool[gui,auto] @ git+https://github.com/aaro-cmd/subtitle-tool'"
+                "  uv tool install --force 'subtitle-tool[gui,auto] @ git+https://github.com/amarald-org/subtitle-tool'"
             )
 
         gui_main(sys.argv[2:])

@@ -7,7 +7,7 @@
 **Subtitles for language learning: find them, sync them, or make them from the audio,
 then read the original and your language together.**
 
-[![Release](https://img.shields.io/github/v/release/aaro-cmd/subtitle-tool?include_prereleases&label=download)](https://github.com/aaro-cmd/subtitle-tool/releases/latest)
+[![Release](https://img.shields.io/github/v/release/amarald-org/subtitle-tool?include_prereleases&label=download)](https://github.com/amarald-org/subtitle-tool/releases/latest)
 ![Platforms](https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-lightgrey)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 <!-- Buy Me a Coffee: replace YOUR_NAME with your page name -->
@@ -32,7 +32,7 @@ Everything is saved as normal `.srt` / `.ass` files next to the video, so any pl
 
 ## Download
 
-Grab the app for your system from **[Releases](https://github.com/aaro-cmd/subtitle-tool/releases/latest)**:
+Grab the app for your system from **[Releases](https://github.com/amarald-org/subtitle-tool/releases/latest)**:
 
 | System | File |
 | --- | --- |
@@ -108,7 +108,7 @@ very loud mixes may miss or invent words.
 The same features without the window. Install with [uv](https://docs.astral.sh/uv/):
 
 ```sh
-git clone https://github.com/aaro-cmd/subtitle-tool && cd subtitle-tool
+git clone https://github.com/amarald-org/subtitle-tool && cd subtitle-tool
 ./install.sh                     # Windows: powershell -ExecutionPolicy ByPass -File .\install.ps1
 ```
 
